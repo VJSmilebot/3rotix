@@ -8,7 +8,7 @@ export default function Home() {
         <img
           src="/logo.png"
           alt="3ROTIX Logo Background"
-          className="w-[1500px] opacity-10"
+          className="w-[15  00px] opacity-10"
         />
       </div>
 
@@ -23,7 +23,7 @@ export default function Home() {
         </p>
         <div className="flex flex-wrap gap-6 justify-center">
           <a
-            href="https://t.me/3rotix"
+            href="https://t.me/disruptingexploitation"
             target="_blank"
             rel="noopener noreferrer"
             className="bg-pink-600 hover:bg-pink-700 text-white px-6 py-3 rounded-lg text-lg"
