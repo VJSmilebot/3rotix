@@ -1,9 +1,6 @@
 
-import Layout from '../components/Layout';
-
 export default function Education() {
   return (
-    <Layout>
       <div className="relative min-h-screen bg-black text-white overflow-hidden">
         {/* Background Logo */}
         <div className="absolute inset-0 flex justify-center items-center opacity-10 z-0 pointer-events-none">
@@ -31,6 +28,5 @@ export default function Education() {
           <p className="text-5xl font-extrabold text-white opacity-80">COMING SOON</p>
         </div>
       </div>
-    </Layout>
   );
 }

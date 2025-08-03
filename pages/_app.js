@@ -1,12 +1,12 @@
 // pages/_app.js
-import "../styles/globals.css";
-import AgeGate from "../components/AgeGate";
+import '../styles/globals.css';
+import Layout from '../components/Layout';
 
 export default function App({ Component, pageProps }) {
   return (
-    <>
-      <AgeGate />
+    <Layout>
       <Component {...pageProps} />
-    </>
+    </Layout>
   );
 }
+  

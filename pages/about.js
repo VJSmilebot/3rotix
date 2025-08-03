@@ -1,9 +1,6 @@
 
-import Layout from '../components/Layout';
-
 export default function About() {
   return (
-    <Layout>
       <div className="relative min-h-screen bg-black text-white overflow-hidden">
         {/* Background Logo */}
         <div className="absolute inset-0 flex justify-center items-center opacity-10 z-0 pointer-events-none">
@@ -30,6 +27,5 @@ export default function About() {
           </p>
         </div>
       </div>
-    </Layout>
   );
 }
