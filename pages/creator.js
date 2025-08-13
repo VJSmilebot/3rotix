@@ -1,27 +1,33 @@
 // pages/creator.js
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
+import Link from 'next/link';
 import { getSupabaseClient } from '../utils/supabase/client';
+import VideoUploader from '../components/VideoUploader';
 
 export default function CreatorPage() {
   const supabase = getSupabaseClient();
   const router = useRouter();
 
+  // auth + profile state
   const [user, setUser] = useState(null);
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [handle, setHandle] = useState('');
 
-  // NEW: social fields
+  // social links
   const [twitter, setTwitter] = useState('');
   const [instagram, setInstagram] = useState('');
   const [website, setWebsite] = useState('');
 
+  // videos
+  const [myVideos, setMyVideos] = useState([]);
+
   const [saving, setSaving] = useState(false);
 
+  // gate: must be logged in, then load profile + videos
   useEffect(() => {
-    // require login
     supabase.auth.getUser().then(async ({ data }) => {
       if (!data?.user) {
         router.push('/login');
@@ -29,7 +35,7 @@ export default function CreatorPage() {
       }
       setUser(data.user);
 
-      // fetch profile
+      // load profile
       const { data: profile } = await supabase
         .from('profiles')
         .select('display_name, bio, avatar_url, handle, twitter, instagram, website')
@@ -45,27 +51,32 @@ export default function CreatorPage() {
         setInstagram(profile.instagram || '');
         setWebsite(profile.website || '');
       }
+
+      // load user videos (own + any visibility)
+      const { data: vids } = await supabase
+        .from('videos')
+        .select('id, title, playback_id, visibility, created_at')
+        .order('created_at', { ascending: false });
+      setMyVideos(vids || []);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // helpers
   const validateHandle = (h) => /^[a-z0-9_]{3,20}$/i.test(h || '');
 
-  // normalize social inputs into full URLs
   const normalizeUrl = (value) => {
     if (!value) return '';
     const v = value.trim();
     if (/^https?:\/\//i.test(v)) return v;
     return `https://${v}`;
   };
-
   const normalizeTwitter = (value) => {
     if (!value) return '';
     let v = value.trim().replace(/^@/, '');
-    // if user pasted a full URL, keep it
     if (/^https?:\/\//i.test(v)) return v;
     return `https://twitter.com/${v}`;
   };
-
   const normalizeInstagram = (value) => {
     if (!value) return '';
     let v = value.trim().replace(/^@/, '');
@@ -76,13 +87,12 @@ export default function CreatorPage() {
   const handleSave = async () => {
     if (!user) return;
 
-    // basic handle validation
     if (!handle || !validateHandle(handle)) {
       alert('Pick a handle: 3–20 letters/numbers/underscore');
       return;
     }
 
-    // check if handle taken by someone else
+    // ensure unique handle (case-insensitive)
     const { data: exists } = await supabase
       .from('profiles')
       .select('id')
@@ -132,13 +142,23 @@ export default function CreatorPage() {
       return;
     }
 
-    // public bucket URL
+    // public URL (bucket should be public per earlier steps)
     const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
     setAvatarUrl(data.publicUrl);
   };
 
+  // refresh videos after an uploader finishes
+  const refreshMyVideos = async () => {
+    const { data: vids } = await supabase
+      .from('videos')
+      .select('id, title, playback_id, visibility, created_at')
+      .order('created_at', { ascending: false });
+    setMyVideos(vids || []);
+  };
+
   if (!user) return <p style={{ padding: 20 }}>Loading…</p>;
 
+  // simple styling
   const input = {
     width: '100%',
     padding: '10px',
@@ -150,7 +170,7 @@ export default function CreatorPage() {
   };
 
   return (
-    <div style={{ maxWidth: 820, margin: '24px auto', padding: 20 }}>
+    <div style={{ maxWidth: 900, margin: '24px auto', padding: 20 }}>
       <h1 style={{ marginBottom: 12 }}>Creator Profile</h1>
 
       <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -237,6 +257,33 @@ export default function CreatorPage() {
             {saving ? 'Saving…' : 'Save Profile'}
           </button>
         </div>
+      </div>
+
+      {/* Videos */}
+      <hr style={{ margin: '24px 0', borderColor: '#333' }} />
+      <h2 style={{ marginBottom: 12 }}>Your Videos</h2>
+
+      <VideoUploader onFinished={refreshMyVideos} />
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+          gap: 16,
+          marginTop: 16,
+        }}
+      >
+        {(myVideos || []).map((v) => (
+          <div key={v.id} style={{ border: '1px solid #2a2a2a', borderRadius: 12, padding: 12 }}>
+            <div style={{ fontWeight: 600 }}>{v.title || 'Untitled'}</div>
+            <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
+              {v.visibility?.toUpperCase() || 'PUBLIC'}
+            </div>
+            <Link href={`/watch/${v.playback_id}`} style={{ textDecoration: 'underline' }}>
+              Watch →
+            </Link>
+          </div>
+        ))}
       </div>
     </div>
   );
