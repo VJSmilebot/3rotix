@@ -30,6 +30,7 @@ export default function Navbar() {
 
         {/* Desktop links */}
         <div className="hidden md:flex items-center gap-6 text-sm">
+          <Link href="/creators" style={{ padding: '8px 12px' }}>Creators</Link>
           {links.map((l) => (
             <Link key={l.href} href={l.href} className="text-white/90 hover:text-white">
               {l.label}
