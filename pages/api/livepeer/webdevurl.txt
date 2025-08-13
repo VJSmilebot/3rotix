@@ -1,0 +1,5 @@
+442c185c-869a-492b-b745-9b7b1db64f59         livepeer  api
+
+https://supabase.com/dashboard
+https://vercel.com/smilebots-projects
+https://livepeer.studio/dashboard
