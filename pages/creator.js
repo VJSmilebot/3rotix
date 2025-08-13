@@ -12,6 +12,12 @@ export default function CreatorPage() {
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [handle, setHandle] = useState('');
+
+  // NEW: social fields
+  const [twitter, setTwitter] = useState('');
+  const [instagram, setInstagram] = useState('');
+  const [website, setWebsite] = useState('');
+
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -24,22 +30,48 @@ export default function CreatorPage() {
       setUser(data.user);
 
       // fetch profile
-      const { data: profile, error } = await supabase
+      const { data: profile } = await supabase
         .from('profiles')
-        .select('display_name, bio, avatar_url, handle')
+        .select('display_name, bio, avatar_url, handle, twitter, instagram, website')
         .eq('id', data.user.id)
         .single();
 
-      if (!error && profile) {
+      if (profile) {
         setDisplayName(profile.display_name || '');
         setBio(profile.bio || '');
         setAvatarUrl(profile.avatar_url || '');
         setHandle(profile.handle || '');
+        setTwitter(profile.twitter || '');
+        setInstagram(profile.instagram || '');
+        setWebsite(profile.website || '');
       }
     });
   }, []);
 
   const validateHandle = (h) => /^[a-z0-9_]{3,20}$/i.test(h || '');
+
+  // normalize social inputs into full URLs
+  const normalizeUrl = (value) => {
+    if (!value) return '';
+    const v = value.trim();
+    if (/^https?:\/\//i.test(v)) return v;
+    return `https://${v}`;
+  };
+
+  const normalizeTwitter = (value) => {
+    if (!value) return '';
+    let v = value.trim().replace(/^@/, '');
+    // if user pasted a full URL, keep it
+    if (/^https?:\/\//i.test(v)) return v;
+    return `https://twitter.com/${v}`;
+  };
+
+  const normalizeInstagram = (value) => {
+    if (!value) return '';
+    let v = value.trim().replace(/^@/, '');
+    if (/^https?:\/\//i.test(v)) return v;
+    return `https://instagram.com/${v}`;
+  };
 
   const handleSave = async () => {
     if (!user) return;
@@ -50,7 +82,7 @@ export default function CreatorPage() {
       return;
     }
 
-    // is that handle taken by someone else?
+    // check if handle taken by someone else
     const { data: exists } = await supabase
       .from('profiles')
       .select('id')
@@ -72,6 +104,9 @@ export default function CreatorPage() {
         bio,
         avatar_url: avatarUrl,
         handle,
+        twitter: twitter ? normalizeTwitter(twitter) : null,
+        instagram: instagram ? normalizeInstagram(instagram) : null,
+        website: website ? normalizeUrl(website) : null,
         updated_at: new Date().toISOString(),
       });
     setSaving(false);
@@ -97,7 +132,7 @@ export default function CreatorPage() {
       return;
     }
 
-    // if bucket is public, use public URL
+    // public bucket URL
     const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
     setAvatarUrl(data.publicUrl);
   };
@@ -108,14 +143,14 @@ export default function CreatorPage() {
     width: '100%',
     padding: '10px',
     border: '1px solid #ccc',
-    borderRadius: 6,
+    borderRadius: 8,
     color: '#000',
     background: '#fff',
     marginBottom: 10,
   };
 
   return (
-    <div style={{ maxWidth: 720, margin: '24px auto', padding: 20 }}>
+    <div style={{ maxWidth: 820, margin: '24px auto', padding: 20 }}>
       <h1 style={{ marginBottom: 12 }}>Creator Profile</h1>
 
       <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -137,7 +172,7 @@ export default function CreatorPage() {
         </div>
 
         {/* Fields */}
-        <div style={{ flex: 1, minWidth: 280 }}>
+        <div style={{ flex: 1, minWidth: 300 }}>
           <label>Handle (for your URL)</label>
           <input
             style={input}
@@ -146,7 +181,7 @@ export default function CreatorPage() {
             placeholder="e.g. smilebot"
           />
           <div style={{ margin: '6px 0 14px', fontSize: 12, opacity: 0.8 }}>
-            Your public page will be at <code>/c/{handle || 'your-handle'}</code>
+            Your public page will be <code>/c/{handle || 'your-handle'}</code>
           </div>
 
           <label>Display Name</label>
@@ -165,10 +200,39 @@ export default function CreatorPage() {
             placeholder="Tell fans who you are…"
           />
 
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label>Twitter (handle or URL)</label>
+              <input
+                style={input}
+                value={twitter}
+                onChange={(e) => setTwitter(e.target.value)}
+                placeholder="@yourhandle or https://twitter.com/yourhandle"
+              />
+            </div>
+            <div>
+              <label>Instagram (handle or URL)</label>
+              <input
+                style={input}
+                value={instagram}
+                onChange={(e) => setInstagram(e.target.value)}
+                placeholder="@yourhandle or https://instagram.com/yourhandle"
+              />
+            </div>
+          </div>
+
+          <label>Website</label>
+          <input
+            style={input}
+            value={website}
+            onChange={(e) => setWebsite(e.target.value)}
+            placeholder="https://your-site.com"
+          />
+
           <button
             onClick={handleSave}
             disabled={saving}
-            style={{ padding: '10px 14px', border: '1px solid #444', borderRadius: 6 }}
+            style={{ padding: '10px 14px', border: '1px solid #444', borderRadius: 8 }}
           >
             {saving ? 'Saving…' : 'Save Profile'}
           </button>
