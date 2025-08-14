@@ -2,26 +2,15 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { getSupabaseClient } from '../utils/supabase/client';
 import { Upload } from 'tus-js-client';
+import { getSupabaseClient } from '../utils/supabase/client';
 
-function parseRequestUpload(json) {
-  // Different Studio accounts/versions sometimes nest differently.
-  // Try several paths for safety.
-  const assetId =
-    json?.asset?.id ||
-    json?.asset?.assetId ||
-    json?.id ||
-    json?.task?.outputAssetId ||
-    null;
-
-  const tusUrl =
-    json?.tusEndpoint ||
-    json?.tus?.url ||
-    json?.upload?.tusEndpoint ||
-    null;
-
-  return { assetId, tusUrl };
+function parseInit(payload) {
+  // Normalize the request-upload response we get from our API
+  return {
+    assetId: payload?.assetId || null,
+    tusUrl: payload?.tusUrl || null,
+  };
 }
 
 export default function VideoUploader({ onFinished }) {
@@ -30,20 +19,20 @@ export default function VideoUploader({ onFinished }) {
   const [title, setTitle] = useState('');
   const [visibility, setVisibility] = useState('public'); // 'public' | 'private'
   const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState('idle'); // idle | requesting | uploading | processing | saving | done | error
+  const [phase, setPhase] = useState('idle'); // idle | requesting | saving | uploading | processing | done | error
   const uploadRef = useRef(null);
 
   const startUpload = async () => {
     if (!file) return alert('Pick a file first');
-    setPhase('requesting');
-    setProgress(0);
 
-    // 0) get current user id (so we can insert a row early)
+    // Make sure user is logged in
     const { data: userData } = await supabase.auth.getUser();
     const user = userData?.user;
     if (!user) return alert('You must be logged in.');
 
-    // 1) ask our server for a tus endpoint + assetId
+    setPhase('requesting');
+
+    // 1) Ask our server for Livepeer upload info
     const res = await fetch('/api/livepeer/request-upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -53,38 +42,40 @@ export default function VideoUploader({ onFinished }) {
       }),
     });
 
-    const raw = await res.json().catch(() => ({}));
-    if (!res.ok || raw?.error) {
-      console.error('[Uploader] init error:', res.status, raw);
+    const initPayload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error('[Uploader] init failed', res.status, initPayload);
+      alert(`Upload init failed (${res.status}): ${initPayload.error || 'unknown'}\n${initPayload.body || initPayload.detail || initPayload.hint || ''}`);
       setPhase('error');
-      return alert(`Upload init failed: ${raw?.error || res.statusText}`);
+      return;
     }
 
-    const { assetId, tusUrl } = parseRequestUpload(raw);
+    const { assetId, tusUrl } = parseInit(initPayload);
     if (!assetId || !tusUrl) {
-      console.error('[Uploader] unexpected init payload:', raw);
+      console.error('[Uploader] unexpected init payload', initPayload);
+      alert('Unexpected response from Livepeer (no assetId/tusUrl).');
       setPhase('error');
-      return alert('Unexpected response from Livepeer (no assetId/tusUrl).');
+      return;
     }
 
-    // 2) Insert a "pending" row immediately (no playback_id yet)
-    //    So it shows up in your list as "Processing…"
+    // 2) Insert a "pending" row immediately with the CORRECT asset_id
     setPhase('saving');
-    const { error: insertErr } = await supabase.from('videos').insert({
+    const { error: insErr } = await supabase.from('videos').insert({
       user_id: user.id,
       asset_id: assetId,
-      playback_id: null,             // will be filled in later
+      playback_id: null,
       title: title || file.name,
       description: null,
-      visibility,
+      visibility, // 'public' or 'private'
     });
-    if (insertErr) {
-      console.error('[Uploader] supabase insert error:', insertErr);
+    if (insErr) {
+      console.error('[Uploader] supabase insert error', insErr);
+      alert(`Could not save DB row: ${insErr.message}`);
       setPhase('error');
-      return alert('Could not save video row. Check policies / table.');
+      return;
     }
 
-    // 3) use tus to upload directly to Livepeer
+    // 3) Upload the file to Livepeer via tus
     setPhase('uploading');
     const upload = new Upload(file, {
       endpoint: tusUrl,
@@ -98,7 +89,8 @@ export default function VideoUploader({ onFinished }) {
         setProgress(Math.round((bytesUploaded / bytesTotal) * 100));
       },
       async onSuccess() {
-        // 4) poll asset status until ready, then update playback_id
+        // 4) After upload completes, poll asset until "ready",
+        //    then update the row with playback_id
         setPhase('processing');
         await pollUntilReadyAndUpdate(assetId);
       },
@@ -109,55 +101,43 @@ export default function VideoUploader({ onFinished }) {
 
   const pollUntilReadyAndUpdate = async (assetId) => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 60; i++) { // up to ~3 minutes
       try {
-        const res = await fetch(`/api/livepeer/asset/${assetId}`);
-        const json = await res.json();
-
-        const status = json?.status; // expect 'ready'
+        const r = await fetch(`/api/livepeer/asset/${assetId}`);
+        const j = await r.json();
+        const status = j?.status; // expect 'ready'
         const playbackId =
-          json?.playbackId ||
-          json?.asset?.playbackId ||
-          json?.asset?.playback?.id ||
+          j?.playbackId ||
+          j?.asset?.playbackId ||
+          j?.asset?.playback?.id ||
           null;
 
         if (status === 'ready' && playbackId) {
-          // Update the row to fill in playback_id
-          setPhase('saving');
-          const { error } = await supabase
+          const { error: updErr } = await supabase
             .from('videos')
             .update({ playback_id: playbackId })
             .eq('asset_id', assetId);
-          if (error) {
-            console.error('[Uploader] supabase update error:', error);
-          }
+
+          if (updErr) console.error('[Uploader] update error', updErr);
+
           setPhase('done');
-          if (onFinished) onFinished();
+          if (onFinished) onFinished(); // let parent refresh the list
           return;
         }
       } catch (e) {
-        console.error('[Uploader] poll error:', e);
+        console.warn('[Uploader] poll error', e);
       }
-      await sleep(3000); // 3s
+      await sleep(3000);
     }
     setPhase('error');
     alert('Processing took too long. Refresh later to check status.');
   };
 
-  const disabled =
-    phase === 'requesting' ||
-    phase === 'uploading' ||
-    phase === 'processing' ||
-    phase === 'saving';
+  const disabled = ['requesting', 'saving', 'uploading', 'processing', 'done'].includes(phase);
 
-  const input = {
-    width: '100%',
-    padding: '10px',
-    border: '1px solid #ccc',
-    borderRadius: 8,
-    background: '#fff',
-    color: '#000',
-    marginBottom: 10,
+  const field = {
+    width: '100%', padding: '10px', border: '1px solid #ccc', borderRadius: 8,
+    background: '#fff', color: '#000', marginBottom: 10,
   };
 
   return (
@@ -165,44 +145,41 @@ export default function VideoUploader({ onFinished }) {
       <h3 style={{ marginTop: 0 }}>Upload a video</h3>
 
       <input
-        style={input}
+        style={field}
         type="text"
         placeholder="Title (optional)"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
+        disabled={disabled}
       />
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <input
           type="file"
           accept="video/*"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
           disabled={disabled}
         />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <select
-            value={visibility}
-            onChange={(e) => setVisibility(e.target.value)}
-            disabled={disabled}
-            style={{ ...input, width: 180, marginBottom: 0 }}
-          >
-            <option value="public">Public</option>
-            <option value="private">Private (JWT‑gated)</option>
-          </select>
-        </label>
+        <select
+          value={visibility}
+          onChange={(e) => setVisibility(e.target.value)}
+          disabled={disabled}
+          style={{ ...field, width: 180, marginBottom: 0 }}
+        >
+          <option value="public">Public</option>
+          <option value="private">Private (JWT‑gated)</option>
+        </select>
         <button onClick={startUpload} disabled={!file || disabled}>
-          {phase === 'uploading'
-            ? `Uploading… ${progress}%`
-            : phase === 'processing'
-            ? 'Processing…'
-            : phase === 'saving'
-            ? 'Saving…'
+          {phase === 'requesting' ? 'Starting…'
+            : phase === 'saving' ? 'Saving…'
+            : phase === 'uploading' ? `Uploading… ${progress}%`
+            : phase === 'processing' ? 'Processing…'
             : 'Start upload'}
         </button>
       </div>
 
       {phase === 'uploading' && (
-        <div style={{ height: 8, background: '#333', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ height: 8, background: '#333', borderRadius: 4, overflow: 'hidden', marginTop: 10 }}>
           <div style={{ width: `${progress}%`, height: '100%', background: '#22c55e' }} />
         </div>
       )}

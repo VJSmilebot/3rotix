@@ -1,21 +1,21 @@
 // pages/api/livepeer/asset/[id].js
-// GET -> { status, playbackId?, asset? }
 export default async function handler(req, res) {
   const { id } = req.query;
-  if (!id) return res.status(400).json({ error: 'Missing id' });
+  if (!id) return res.status(400).json({ error: 'missing-id' });
 
   try {
-    const lpRes = await fetch(`https://livepeer.studio/api/asset/${id}`, {
+    const r = await fetch(`https://livepeer.studio/api/asset/${id}`, {
       headers: { Authorization: `Bearer ${process.env.LIVEPEER_API_KEY}` },
     });
-    const json = await lpRes.json();
-    if (!lpRes.ok) return res.status(lpRes.status).json(json);
+    const j = await r.json();
+    if (!r.ok) return res.status(r.status).json(j);
 
-    // ready when json.status?.phase === 'ready' (new API) or json.status === 'ready' (older)
-    const phase = json?.status?.phase || json?.status;
-    const playbackId = json?.playbackId || json?.asset?.playbackId;
-    res.status(200).json({ status: phase, playbackId, asset: json });
+    // Old vs new shapes
+    const phase = j?.status?.phase || j?.status; // 'ready' when done
+    const playbackId = j?.playbackId || j?.asset?.playbackId || j?.playback?.id || null;
+
+    return res.status(200).json({ status: phase, playbackId, asset: j });
   } catch (e) {
-    res.status(500).json({ error: 'Server error', detail: String(e) });
+    return res.status(500).json({ error: 'server-error', detail: String(e) });
   }
 }
