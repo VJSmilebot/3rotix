@@ -44,28 +44,27 @@ export default function GatedPlayer({ playbackId }) {
     return () => { cancelled = true; };
   }, [playbackId]);
 
-  // Build candidate manifest URLs (VOD first)
+  // Use only browser-friendly CDNs
   const candidatesFor = (id, token) => {
     const q = token ? `?jwt=${encodeURIComponent(token)}` : '';
     return [
-      // VOD-centric domains first (most reliable for on-demand assets)
-      `https://vod-cdn.lp-playback.studio/hls/${id}/index.m3u8${q}`,
+      // This one allows cross-origin requests from your site
       `https://livepeercdn.studio/hls/${id}/index.m3u8${q}`,
-      // Legacy / fallback
+      // Keep as a last resort (often 404 for VOD)
       `https://lp-playback.com/hls/${id}/index.m3u8${q}`,
+      // DO NOT use vod-cdn.lp-playback.studio in the browser — CORS 403
     ];
   };
 
-  // Fetch manifest and make sure it actually has levels
+  // Probe and require real stream levels in the master manifest
   async function probeManifest(url) {
     try {
       const r = await fetch(url, { method: 'GET', cache: 'no-store' });
       console.log('[Player] probe', url, r.status);
       if (!r.ok) return { ok: false, reason: `HTTP ${r.status}` };
       const text = await r.text();
-      // Master manifests should contain at least one #EXT-X-STREAM-INF
       const hasLevels = /#EXT-X-STREAM-INF/i.test(text);
-      return { ok: hasLevels, reason: hasLevels ? 'has levels' : 'no levels yet', url, text };
+      return { ok: hasLevels, reason: hasLevels ? 'has levels' : 'no levels yet', url };
     } catch (e) {
       return { ok: false, reason: String(e) };
     }
