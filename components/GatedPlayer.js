@@ -1,48 +1,58 @@
 // components/GatedPlayer.js
 'use client';
 import { useEffect, useState } from 'react';
-// For Livepeer React v3+:
 import { Player } from '@livepeer/react';
+import { getSupabaseClient } from '../utils/supabase/client';
 
 export default function GatedPlayer({ playbackId }) {
-  const [jwt, setJwt] = useState(null);
-  const [error, setError] = useState(null);
+  const supabase = getSupabaseClient();
+  const [jwt, setJwt] = useState(undefined); // undefined=loading, null=no token needed
+  const [err, setErr] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data?.session?.access_token;
+
         const res = await fetch('/api/livepeer/sign', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
           body: JSON.stringify({ playbackId }),
         });
-        const data = await res.json();
-        if (!res.ok || !data?.token) {
-          throw new Error(data?.error || 'Failed to get playback token');
+
+        if (!res.ok) {
+          // For public videos or API errors, fall back to no token
+          setJwt(null);
+          return;
         }
-        if (!cancelled) setJwt(data.token);
+
+        const json = await res.json().catch(() => ({}));
+        setJwt(json?.token ?? null);
       } catch (e) {
-        if (!cancelled) setError(String(e.message || e));
+        setJwt(null);
       }
     })();
     return () => { cancelled = true; };
   }, [playbackId]);
 
-  if (error) return <p style={{ padding: 20, color: 'tomato' }}>Player error: {error}</p>;
-  if (!jwt) return <p style={{ padding: 20 }}>Loading video…</p>;
+  if (!playbackId) return null;
+  if (err) return <p style={{ color: 'tomato', padding: 20 }}>Player error: {String(err)}</p>;
+  if (jwt === undefined) return <p style={{ padding: 20 }}>Loading video…</p>;
 
   return (
     <div style={{ maxWidth: 960, margin: '0 auto' }}>
       <Player
         title="Video"
         playbackId={playbackId}
-        jwt={jwt}         // required for private/JWT‑gated assets; ignored for public
+        jwt={jwt || undefined}   // only pass if present
         autoPlay
-        muted={false}
         showPipButton
         showTitle={false}
-        theme={{ borderStyles: { containerBorderStyle: 'solid' } }}
       />
     </div>
   );
