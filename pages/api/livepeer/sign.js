@@ -23,14 +23,17 @@ export default async function handler(req, res) {
     const { playbackId } = req.body || {};
     if (!playbackId) return res.status(400).json({ error: 'Missing playbackId' });
 
-    // 1) Verify viewer is logged in (via Supabase access token)
+    // 1) Get auth token if provided
     const authHeader = req.headers.authorization || '';
     const accessToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (!accessToken) return res.status(401).json({ error: 'Not authenticated' });
-
-    const { data: userData, error: authErr } = await supabaseAdmin.auth.getUser(accessToken);
-    if (authErr || !userData?.user) return res.status(401).json({ error: 'Invalid auth token' });
-    const viewer = userData.user;
+    
+    let viewer = null;
+    if (accessToken) {
+      const { data: userData, error: authErr } = await supabaseAdmin.auth.getUser(accessToken);
+      if (!authErr && userData?.user) {
+        viewer = userData.user;
+      }
+    }
 
     // 2) Look up the video by playbackId
     const { data: rows, error: dbErr } = await supabaseAdmin
@@ -39,10 +42,17 @@ export default async function handler(req, res) {
       .eq('playback_id', playbackId)
       .limit(1);
 
-    if (dbErr) return res.status(500).json({ error: 'DB error', detail: dbErr.message });
+    if (dbErr) {
+      console.error('Database error in sign endpoint:', dbErr);
+      // If database is unreachable, assume public video (fallback)
+      return res.status(200).json({ token: null });
+    }
 
     const video = Array.isArray(rows) && rows[0] ? rows[0] : null;
-    if (!video) return res.status(404).json({ error: 'Video not found' });
+    if (!video) {
+      // Video not found in database, assume public (fallback)
+      return res.status(200).json({ token: null });
+    }
 
     // 3) Public vs Private
     if (video.visibility !== 'private') {
@@ -51,6 +61,9 @@ export default async function handler(req, res) {
     }
 
     // Private → only owner may view (you can expand this rule later)
+    if (!viewer) {
+      return res.status(401).json({ error: 'Authentication required for private video' });
+    }
     if (viewer.id !== video.user_id) {
       return res.status(403).json({ error: 'Not allowed to view this private video' });
     }
