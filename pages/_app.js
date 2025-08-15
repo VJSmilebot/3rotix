@@ -11,9 +11,18 @@ export default function App({ Component, pageProps }) {
         <meta name="description" content="3ROTIX Creator Platform" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
+
       <Layout>
-        <Component {...pageProps} />
+        {/* Keep content from sitting under the fixed footer */}
+        <main className="pb-[calc(4rem+env(safe-area-inset-bottom))]">
+          <Component {...pageProps} />
+        </main>
       </Layout>
+
+      {/* Sticky footer overlay (global) */}
+      <footer className="fixed bottom-0 left-0 w-full bg-black text-white p-4 text-center z-50">
+        My sticky footer overlay
+      </footer>
     </>
   );
 }
