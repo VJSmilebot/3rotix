@@ -9,111 +9,102 @@ export default function GatedPlayer({ playbackId }) {
   const supabase = getSupabaseClient();
   const videoRef = useRef(null);
 
-  const [jwt, setJwt] = useState(undefined); // undefined = fetching, null = public/no token
-  const [status, setStatus] = useState('loading'); // loading | ready | error
+  const [jwt, setJwt] = useState(undefined);      // undefined = checking, null = public
+  const [hlsUrl, setHlsUrl] = useState(null);     // resolved master manifest URL
+  const [status, setStatus] = useState('loading');// loading | ready | error
   const [errMsg, setErrMsg] = useState('');
 
-  // 1) Ask our server if this needs a JWT (private) or not (public)
+  // 1) Decide if this is private (needs JWT) or public
   useEffect(() => {
-    let cancelled = false;
+    let stop = false;
     (async () => {
       try {
         const { data } = await supabase.auth.getSession();
-        const accessToken = data?.session?.access_token;
-
-        const res = await fetch('/api/livepeer/sign', {
+        const tok = data?.session?.access_token;
+        const r = await fetch('/api/livepeer/sign', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-          },
+          headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
           body: JSON.stringify({ playbackId }),
         });
-
-        if (!res.ok) {
-          // not logged in / forbidden → treat as public (will fail for private)
-          setJwt(null);
-          return;
+        if (!stop) {
+          if (!r.ok) setJwt(null); // treat as public if not logged in / forbidden
+          else {
+            const j = await r.json().catch(() => ({}));
+            setJwt(j?.token ?? null);
+          }
         }
-        const j = await res.json().catch(() => ({}));
-        setJwt(j?.token ?? null);
       } catch {
-        setJwt(null);
+        if (!stop) setJwt(null);
       }
     })();
-    return () => { cancelled = true; };
+    return () => { stop = true; };
   }, [playbackId]);
 
-  // Use only browser-friendly CDNs
-  const candidatesFor = (id, token) => {
-    const q = token ? `?jwt=${encodeURIComponent(token)}` : '';
-    return [
-      // This one allows cross-origin requests from your site
-      `https://livepeercdn.studio/hls/${id}/index.m3u8${q}`,
-      // Keep as a last resort (often 404 for VOD)
-      `https://lp-playback.com/hls/${id}/index.m3u8${q}`,
-      // DO NOT use vod-cdn.lp-playback.studio in the browser — CORS 403
-    ];
-  };
-
-  // Probe and require real stream levels in the master manifest
-  async function probeManifest(url) {
-    try {
-      const r = await fetch(url, { method: 'GET', cache: 'no-store' });
-      console.log('[Player] probe', url, r.status);
-      if (!r.ok) return { ok: false, reason: `HTTP ${r.status}` };
-      const text = await r.text();
-      const hasLevels = /#EXT-X-STREAM-INF/i.test(text);
-      return { ok: hasLevels, reason: hasLevels ? 'has levels' : 'no levels yet', url };
-    } catch (e) {
-      return { ok: false, reason: String(e) };
-    }
-  }
-
-  // 2) Once we know jwt/public, try to play with retries until levels exist
+  // 2) Ask Livepeer (via our server) for the correct HLS URL for this playbackId
   useEffect(() => {
-    if (jwt === undefined || !playbackId) return;
+    if (jwt === undefined) return;
+    let stop = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/livepeer/playback/${playbackId}`, { cache: 'no-store' });
+        const j = await r.json();
+        if (!stop) {
+          let url = j?.hlsUrl;
+          if (!url) throw new Error('No HLS URL from playback info');
+          if (jwt) {
+            const sep = url.includes('?') ? '&' : '?';
+            url = `${url}${sep}jwt=${encodeURIComponent(jwt)}`;
+          }
+          setHlsUrl(url);
+        }
+      } catch (e) {
+        if (!stop) { setStatus('error'); setErrMsg('Could not resolve HLS URL'); }
+      }
+    })();
+    return () => { stop = true; };
+  }, [playbackId, jwt]);
+
+  // 3) Load with hls.js (and wait until manifest actually has variants)
+  useEffect(() => {
+    if (!hlsUrl) return;
+    const video = videoRef.current;
+    if (!video) return;
 
     let destroyed = false;
     let hls;
 
-    const MAX_TRIES = 12;   // ~36s total
-    const SLEEP_MS  = 3000;
+    const MAX_TRIES = 40; // ~120s
+    const SLEEP = 3000;
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const hasLevels = async (url) => {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) return false;
+      const text = await r.text();
+      return /#EXT-X-STREAM-INF/i.test(text);
+    };
 
-    const setup = async () => {
+    const start = async () => {
       setStatus('loading');
 
-      let src = null;
-      for (let attempt = 1; attempt <= MAX_TRIES && !src; attempt++) {
-        // Try each candidate base in order
-        const cands = candidatesFor(playbackId, jwt);
-        for (const c of cands) {
-          const p = await probeManifest(c);
-          if (p.ok) { src = c; break; }
-          console.warn(`[Player] manifest not ready (${p.reason}) — try ${attempt}/${MAX_TRIES}`);
-        }
-        if (!src) await sleep(SLEEP_MS);
+      // Wait until master manifest lists variants
+      let ok = false;
+      for (let i = 1; i <= MAX_TRIES; i++) {
+        try {
+          const ready = await hasLevels(hlsUrl);
+          console.log(`[Player] probe manifest → ${ready ? 'OK' : 'not ready'} (${i}/${MAX_TRIES})`);
+          if (ready) { ok = true; break; }
+        } catch {}
+        await sleep(SLEEP);
+        if (destroyed) return;
       }
-
-      if (!src) {
-        setStatus('error');
-        setErrMsg('Could not load HLS manifest (still packaging or wrong ID).');
-        return;
-      }
-
-      console.log('[Player] using manifest', src);
-
-      const video = videoRef.current;
-      if (!video) return;
+      if (!ok) { setStatus('error'); setErrMsg('Could not load HLS manifest (still packaging or wrong ID).'); return; }
 
       const onReady = () => { setStatus('ready'); video.play().catch(() => {}); };
       const onVideoError = () => { setStatus('error'); setErrMsg('Video element error.'); };
 
-      // Native HLS (Safari/iOS)
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = src;
+        video.src = hlsUrl;
         video.addEventListener('loadedmetadata', onReady);
         video.addEventListener('error', onVideoError);
         return () => {
@@ -123,21 +114,19 @@ export default function GatedPlayer({ playbackId }) {
         };
       }
 
-      // Other browsers → hls.js
       if (Hls.isSupported()) {
         hls = new Hls({ enableWorker: true });
-        hls.loadSource(src);
+        hls.loadSource(hlsUrl);
         hls.attachMedia(video);
 
         const onManifest = () => onReady();
-        const onErr = async (event, data) => {
+        const onErr = async (_e, data) => {
           console.error('[HLS] error', data?.type, data?.details);
-          // If manifest/levels glitch, re-run the full setup (will re-probe)
-          if (data?.details?.toLowerCase().includes('manifest')) {
+          if (String(data?.details).toLowerCase().includes('manifest')) {
             setStatus('loading');
             hls?.destroy();
             await sleep(1500);
-            if (!destroyed) setup();
+            if (!destroyed) start();
             return;
           }
           setStatus('error');
@@ -146,21 +135,15 @@ export default function GatedPlayer({ playbackId }) {
 
         hls.on(Hls.Events.MANIFEST_PARSED, onManifest);
         hls.on(Hls.Events.ERROR, onErr);
-
-        return () => {
-          hls.off(Hls.Events.MANIFEST_PARSED, onManifest);
-          hls.off(Hls.Events.ERROR, onErr);
-          hls.destroy();
-        };
-      } else {
-        setStatus('error');
-        setErrMsg('HLS not supported in this browser.');
+        return () => { hls.destroy(); };
       }
+
+      setStatus('error'); setErrMsg('HLS not supported in this browser.');
     };
 
-    setup();
+    start();
     return () => { destroyed = true; if (hls) hls.destroy(); };
-  }, [jwt, playbackId]);
+  }, [hlsUrl]);
 
   return (
     <div style={{ maxWidth: 960, margin: '0 auto' }}>
