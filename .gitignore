@@ -1,4 +1,12 @@
-"node_modules\n.next\n.env\n.DS_Store" 
-node_modules/ 
-.next/ 
-.env 
+# dependencies
+node_modules/
+
+# build output
+.next/
+
+# system files
+.DS_Store
+
+# env files
+.env
+.env.local

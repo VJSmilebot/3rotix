@@ -9,7 +9,7 @@ export default function App({ Component, pageProps }) {
       <Head>
         <title>3ROTIX</title>
         <meta name="description" content="3ROTIX Creator Platform" />
-        <link rel="icon" href="/favicon.ico" />
+        <link rel="icon" href="/favicon.png" />
       </Head>
       <Layout>
         <Component {...pageProps} />
@@ -17,3 +17,4 @@ export default function App({ Component, pageProps }) {
     </>
   );
 }
+      

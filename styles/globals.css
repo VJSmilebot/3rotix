@@ -1,4 +1,14 @@
 /* =========================================
+   Custom fonts
+   ========================================= */
+@font-face {
+  font-family: 'Neon 80s 400';
+  src: url('/fonts/Neon 80s 400.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* =========================================
    Tailwind base
    ========================================= */
 @tailwind base;

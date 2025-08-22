@@ -16,21 +16,29 @@ export default function Home() {
       </Head>
 
       {/* Background logo (subtle on mobile) */}
-      <div className="absolute inset-0 opacity-10 pointer-events-none">
+      <div className="absolute inset-0 opacity-40 pointer-events-none scale-175">
         <Image
           src="/logo.png"
           alt="3ROTIX watermark"
-          layout="fill"           /* if your Next version prefers 'fill' prop, use: fill */
-          objectFit="contain"     /* or style={{ objectFit: 'contain' }} with 'fill' */
+          fill
+          style={{ objectFit: "contain" }}
           priority
         />
       </div>
 
       {/* Hero copy */}
       <div className="relative z-10 w-full max-w-4xl px-4 py-20 md:py-28">
-        <h1 className="font-extrabold text-pink-500 mb-2 text-[clamp(2rem,7vw,3.75rem)] leading-tight">
-          3ROTIX
-        </h1>
+        <div className="relative w-full h-[150px] md:h-[220px]">
+          <Image
+            src="/goo3.png"
+            alt="3ROTIX Hero"
+            fill
+            style={{ objectFit: "contain" }}
+            priority
+            className="mx-auto mb-2"
+          />
+        </div>
+
         <p className="font-semibold text-white mb-1 text-[clamp(1rem,4.5vw,1.75rem)]">
           Disrupting Exploitation. By Creators, For Creators.
         </p>
@@ -41,34 +49,31 @@ export default function Home() {
         {/* CTA row */}
         <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
           <a
-            href="https://t.me/disruptingexploitation"
-            target="_blank"
-            rel="noopener noreferrer"
+            href="/creator-portal"
             className="px-6 py-3 rounded-lg bg-pink-600 hover:bg-pink-700 text-white font-semibold"
           >
-            Join Telegram
+            Creator Portal
           </a>
 
           <a
-            href="mailto:smilebot3000@gmail.com"
-            className="px-6 py-3 rounded-lg bg-white text-black font-semibold hover:bg-gray-200"
-          >
-            Email Us
-          </a>
-
-          <button
-            onClick={() => setShowWaitlist(true)}
+            href="/fan-portal"
             className="px-6 py-3 rounded-lg border border-white/20 text-white hover:bg-white/10"
           >
-            Join Waitlist
-          </button>
+            Join as a Fan
+          </a>
+        </div>
 
+        {/* Small links under CTAs */}
+        <div className="mt-4 flex flex-col sm:flex-row gap-3 justify-center text-sm text-white/70">
           <button
             onClick={() => setShowRoadmap(true)}
-            className="px-6 py-3 rounded-lg border border-white/20 text-white hover:bg-white/10"
+            className="hover:text-pink-400"
           >
             View Roadmap
           </button>
+          <a href="/community" className="hover:text-pink-400">
+            Explore Community
+          </a>
         </div>
       </div>
 
