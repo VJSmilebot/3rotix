@@ -1,5 +1,6 @@
 // pages/c/[handle].js
 import Head from 'next/head';
+import VideosGrid from '../../components/VideosGrid';
 
 export async function getServerSideProps({ params }) {
   const handle = params.handle;
@@ -99,6 +100,11 @@ export default function PublicProfile({ profile }) {
         </div>
 
         {bio && <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{bio}</p>}
+
+        {/* Add the video grid below the bio */}
+        <div style={{ marginTop: 32 }}>
+          <VideosGrid userId={profile.id} />
+        </div>
       </div>
     </>
   );

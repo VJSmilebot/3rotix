@@ -1,26 +1,18 @@
+// pages/watch/[id].js
 import dynamic from 'next/dynamic';
-import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
-import { getSupabaseClient } from '../../utils/supabase/client';
 
-const GatedPlayer = dynamic(() => import('../../components/GatedPlayer'), { ssr: false });
+const LivepeerPlayer = dynamic(() => import('../../components/LivepeerPlayer'), { ssr: false });
 
-export default function WatchPage() {
-  const router = useRouter();
-  const playbackId = router.query.id;
-  const supabase = getSupabaseClient();
-  const [ready, setReady] = useState(false);
+export async function getServerSideProps({ params }) {
+  const playbackId = params?.id || null;
+  return { props: { playbackId } };
+}
 
-  // Optional: require login to watch (you can remove this if you want public watch)
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (!data?.user) router.push('/login');
-      else setReady(true);
-    });
-  }, []);
-
-  if (!playbackId) return <p style={{ padding: 20 }}>Loading…</p>;
-  if (!ready) return <p style={{ padding: 20 }}>Checking session…</p>;
-
-  return <GatedPlayer playbackId={playbackId} />;
+export default function WatchPage({ playbackId }) {
+  return (
+    <div style={{ padding: 24 }}>
+      <h1 style={{ marginBottom: 12 }}>Watch: {playbackId}</h1>
+      <LivepeerPlayer playbackId={playbackId} autoplay />
+    </div>
+  );
 }
