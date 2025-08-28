@@ -1,7 +1,9 @@
 'use client';
 import Link from 'next/link';
 import { useState, useEffect, useRef } from 'react';
+import { getSupabaseClient } from '../utils/supabase/client';
 
+/** Dropdown group — unchanged structure/styles */
 const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, closeMobile }) => {
   const isOpen = activeDropdown === label;
   const ref = useRef(null);
@@ -75,6 +77,24 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState(null);
 
+  // NEW: Auth state (kept tiny + client-only)
+  const [user, setUser] = useState(null);
+  const supabase = getSupabaseClient();
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUser(data?.user ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => sub?.subscription?.unsubscribe();
+  }, [supabase]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  // Your original link groups (unchanged)
   const platform = [
     { label: 'Overview', href: '/platform' },
     { label: 'Features', href: '/features' },
@@ -113,13 +133,13 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-white/10 bg-black/60 backdrop-blur">
       <nav className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between text-white">
-        {/* Left: logo */}
+        {/* Left: logo (unchanged) */}
         <Link href="/" className="flex items-center gap-2 font-bold tracking-wide">
           <img alt="3ROTIX" src="/logo.png" className="h-7 w-7" />
           <span>3ROTIX</span>
         </Link>
 
-        {/* Desktop nav */}
+        {/* Desktop nav (unchanged) */}
         <div className="hidden md:flex items-center gap-2">
           <NavGroup label="Platform" items={platform} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
           <NavGroup label="Learn" items={learn} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
@@ -127,17 +147,41 @@ export default function Navbar() {
           <NavGroup label="Company" items={company} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
         </div>
 
-        {/* Right: primary CTA */}
-        <div className="hidden md:block">
+        {/* Right: Creator Portal + Auth (adds buttons, doesn't change styling elsewhere) */}
+        <div className="hidden md:flex items-center gap-3">
           <Link
             href="/creator-portal"
             className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-pink-600 hover:bg-pink-500"
           >
             Creator Portal
           </Link>
+
+          {user ? (
+            <>
+              <Link
+                href="/creator"
+                className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+              >
+                Profile
+              </Link>
+              <button
+                onClick={handleLogout}
+                className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <Link
+              href="/login"
+              className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+            >
+              Login
+            </Link>
+          )}
         </div>
 
-        {/* Mobile hamburger */}
+        {/* Mobile hamburger (unchanged) */}
         <button
           onClick={() => {
             setOpen((v) => !v);
@@ -147,16 +191,12 @@ export default function Navbar() {
           aria-label="Open menu"
         >
           <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
-            {open ? (
-              <path d="M6 18L18 6M6 6l12 12" />
-            ) : (
-              <path d="M3 6h18M3 12h18M3 18h18" />
-            )}
+            {open ? <path d="M6 18L18 6M6 6l12 12" /> : <path d="M3 6h18M3 12h18M3 18h18" />}
           </svg>
         </button>
       </nav>
 
-      {/* Mobile drawer */}
+      {/* Mobile drawer (unchanged layout; adds auth actions at bottom) */}
       {open && (
         <div className="md:hidden border-t border-white/10 bg-black/95 text-white">
           <div className="px-4 py-3 space-y-3">
@@ -200,6 +240,35 @@ export default function Navbar() {
             >
               Creator Portal
             </Link>
+
+            {user ? (
+              <>
+                <Link
+                  href="/creator"
+                  className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+                  onClick={() => setOpen(false)}
+                >
+                  Profile
+                </Link>
+                <button
+                  onClick={() => {
+                    handleLogout();
+                    setOpen(false);
+                  }}
+                  className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+                >
+                  Logout
+                </button>
+              </>
+            ) : (
+              <Link
+                href="/login"
+                className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+                onClick={() => setOpen(false)}
+              >
+                Login
+              </Link>
+            )}
           </div>
         </div>
       )}

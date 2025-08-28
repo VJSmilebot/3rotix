@@ -2,10 +2,12 @@
 import '../styles/globals.css';
 import Layout from '../components/Layout';
 import Head from 'next/head';
+import AgeGate from "../components/AgeGate";
 
 export default function App({ Component, pageProps }) {
   return (
     <>
+      <AgeGate />
       <Head>
         <title>3ROTIX</title>
         <meta name="description" content="3ROTIX Creator Platform" />

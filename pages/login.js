@@ -1,73 +1,79 @@
+import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { getSupabaseClient } from '../utils/supabase/client';
-import { useRouter } from 'next/router';
 
-export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const router = useRouter();
-  const supabase = getSupabaseClient();
 
-  const handleSignup = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) return alert(error.message);
-    router.push('/');
-  };
+export default function Login() {
+const router = useRouter();
+const supabase = getSupabaseClient();
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return alert(error.message);
-    router.push('/creator');
-  };
 
-  const inputStyle = {
-    display: 'block',
-    marginBottom: 10,
-    width: '100%',
-    padding: '10px',
-    border: '1px solid #ccc',
-    borderRadius: 6,
-    color: '#000',            // <-- black input text
-    backgroundColor: '#fff',
-  };
+const [email, setEmail] = useState('');
+const [password, setPassword] = useState('');
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState('');
 
-  const labelStyle = { display: 'block', marginBottom: 6 };
 
-  return (
-    <div style={{ maxWidth: 420, margin: '40px auto', padding: 20 }}>
-      <h1 style={{ marginBottom: 16 }}>Login or Sign Up</h1>
-      <form>
-        <label style={labelStyle}>Email</label>
-        <input
-          type="email"
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={inputStyle}
-        />
+const nextParam = typeof router.query.next === 'string' ? router.query.next : '';
+const next = nextParam && nextParam.startsWith('/') ? nextParam : '/creator';
 
-        <label style={labelStyle}>Password</label>
-        <input
-          type="password"
-          placeholder="••••••••"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={inputStyle}
-        />
 
-        <div style={{ marginBottom: 12 }}>
-          <a href="/reset" style={{ fontSize: 14, textDecoration: 'underline' }}>
-            Forgot your password?
-          </a>
-        </div>
+async function handleSubmit(e) {
+e.preventDefault();
+setLoading(true);
+setError('');
+const { error } = await supabase.auth.signInWithPassword({ email, password });
+if (error) {
+setError(error.message);
+setLoading(false);
+return;
+}
+// hard reload so SSR immediately sees cookies
+window.location.replace(next);
+}
 
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={handleLogin} type="button">Log In</button>
-          <button onClick={handleSignup} type="button">Sign Up</button>
-        </div>
-      </form>
-    </div>
-  );
+
+return (
+<div className="min-h-screen flex items-center justify-center bg-gray-900">
+<div className="max-w-md w-full space-y-6 p-8 bg-gray-800 rounded-lg">
+<h1 className="text-white text-2xl font-semibold text-center">Log in</h1>
+{error && (
+<div className="bg-red-500/10 text-red-400 border border-red-500 p-3 rounded">{error}</div>
+)}
+<form onSubmit={handleSubmit} className="space-y-4">
+<div>
+<label htmlFor="email" className="block text-sm text-white">Email</label>
+<input
+id="email"
+type="email"
+value={email}
+onChange={(e) => setEmail(e.target.value)}
+className="mt-1 w-full rounded-md bg-gray-700 text-white px-3 py-2 focus:outline-none focus:ring"
+autoComplete="email"
+required
+/>
+</div>
+<div>
+<label htmlFor="password" className="block text-sm text-white">Password</label>
+<input
+id="password"
+type="password"
+value={password}
+onChange={(e) => setPassword(e.target.value)}
+className="mt-1 w-full rounded-md bg-gray-700 text-white px-3 py-2 focus:outline-none focus:ring"
+autoComplete="current-password"
+required
+/>
+</div>
+<button
+type="submit"
+disabled={loading}
+className="w-full py-2 rounded-md bg-pink-600 text-white font-medium disabled:opacity-50"
+>
+{loading ? 'Logging in…' : 'Log in'}
+</button>
+</form>
+</div>
+</div>
+);
 }
