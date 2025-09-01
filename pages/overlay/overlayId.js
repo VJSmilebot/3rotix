@@ -1,7 +1,7 @@
 'use client';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import OverlayLayer from '@/components/OverlayLayer';
+import OverlayLayer from '../../components/OverlayLayer';
 
 export default function OBSOverlay() {
   const { query } = useRouter();
