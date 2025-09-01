@@ -63,7 +63,7 @@ export default function VideosGrid({ userId }) {
                 <div className="title" title={v.title || ''}>
                   {v.title || 'Untitled'}
                 </div>
-                <Link className="watch" href={`/watch/${v.playback_id}`}>
+                <Link className="watch" href={`/watch/uploads/${v.playback_id}`}>
                   Watch →
                 </Link>
               </div>
