@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Head from 'next/head';
 import * as Broadcast from '@livepeer/react/broadcast';
+import { getIngest } from '@livepeer/react';
 
 import CopyField from '../components/CopyField';
 import DeviceCheckModal from '../components/DeviceCheckModal';
@@ -27,7 +28,7 @@ function formatDuration(ms) {
 }
 
 export default function Streaming() {
-  // auth + role gate
+  // -------- Auth + role gate --------
   const { user, loading } = useAuth() ?? {};
   const [canBroadcast, setCanBroadcast] = useState(false);
   const [roleChecked, setRoleChecked] = useState(false);
@@ -38,35 +39,37 @@ export default function Streaming() {
       if (!user) { setRoleChecked(true); return; }
       const { data: profile } = await supabase
         .from('profiles')
-        .select('role, plan_tier, is_creator')
+        .select('role')
         .eq('id', user.id)
         .maybeSingle();
-      const role = profile?.role || user.user_metadata?.role || 'fan';
+
+      const role = (profile?.role || user.user_metadata?.role || 'fan').toLowerCase();
       const plan = (profile?.plan_tier || '').toLowerCase();
       const allowed =
         !!profile?.is_creator ||
         role === 'creator' ||
         role === 'admin' ||
         ['pro', 'creator', 'vip'].includes(plan);
+
       if (!cancelled) { setCanBroadcast(!!allowed); setRoleChecked(true); }
     })();
     return () => { cancelled = true; };
   }, [user?.id]);
 
-  // form
+  // -------- Create stream form --------
   const [title, setTitle] = useState('Going live on 3ROTIX');
   const [record, setRecord] = useState(true);
   const [nsfw, setNsfw] = useState(true);
 
-  // stream state
+  // Stream object returned from API
   const [creating, setCreating] = useState(false);
   const [stream, setStream] = useState(null);
 
-  // modals
+  // Modals
   const [showDeviceCheck, setShowDeviceCheck] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
-  // overlay config
+  // Overlay state
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [overlayConfig, setOverlayConfig] = useState({
     position: 'br',
@@ -82,21 +85,34 @@ export default function Streaming() {
     lowerPos: 'bl',
   });
 
-  // live UI bits
+  // Live preview UI
   const [isLive, setIsLive] = useState(false);
   const [startedAt, setStartedAt] = useState(null);
   const [now, setNow] = useState(Date.now());
   const [viewerCount, setViewerCount] = useState(0);
 
-  // refs for hotkeys
+  // Hotkey refs
   const startRef = useRef(null);
   const stopRef = useRef(null);
   const micRef = useRef(null);
 
   const siteOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  const ingestUrl = stream?.webrtcIngestUrl || null;
   const watchUrl = stream?.playbackId ? `/watch/${stream.playbackId}` : '';
   const lvprUrl  = stream?.playbackId ? `https://lvpr.tv/?v=${stream.playbackId}` : '';
+
+  // ✅ Derive WHIP ingest URL (handles older SDKs with fallback)
+  const ingestUrl = useMemo(() => {
+    if (!stream) return null;
+    if (stream.webrtcIngestUrl) return stream.webrtcIngestUrl;
+    if (stream.streamKey) {
+      try {
+        return getIngest(stream.streamKey, { baseUrl: 'https://playback.livepeer.studio/webrtc' });
+      } catch {
+        return `https://playback.livepeer.studio/webrtc/${stream.streamKey}`;
+      }
+    }
+    return null;
+  }, [stream]);
 
   const shareBundle = useMemo(() => {
     if (!stream) return '';
@@ -105,8 +121,8 @@ export default function Streaming() {
       `Title: ${title}`,
       `Watch (site): ${siteOrigin}${watchUrl}`,
       `Watch (Livepeer): ${lvprUrl}`,
-      `RTMP URL: ${stream.rtmpIngestUrl}`,
-      `Stream Key: ${stream.streamKey}`,
+      `RTMP URL: rtmp://rtmp.livepeer.com/live`,
+      `Stream Key: ${stream.streamKey || ''}`,
       record ? 'VOD: Recording enabled' : 'VOD: Not recording',
     ];
     return lines.join('\n');
@@ -125,14 +141,35 @@ export default function Streaming() {
     e?.preventDefault();
     setCreating(true);
     try {
+      // Include Supabase access token in Authorization header (no auth-helpers needed)
+      const { data: sess } = await supabase.auth.getSession();
+      const accessToken = sess?.session?.access_token;
+
       const res = await fetch('/api/livepeer/create-stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
         body: JSON.stringify({ name: title, record, nsfw }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Failed to create stream');
-      setStream(data);
+
+      // Normalize expected fields just in case
+      const normalized = {
+        id: data.id,
+        playbackId: data.playbackId,
+        streamKey: data.streamKey,
+        // These can be derived; we keep them if the API gave them
+        rtmpIngestUrl: data.rtmpIngestUrl || 'rtmp://rtmp.livepeer.com/live',
+        webrtcIngestUrl:
+          data.webrtcIngestUrl ||
+          (data.streamKey ? `https://playback.livepeer.studio/webrtc/${data.streamKey}` : null),
+      };
+
+      setStream(normalized);
     } catch (err) {
       alert(err.message || 'Failed to create stream.');
     } finally {
@@ -140,7 +177,7 @@ export default function Streaming() {
     }
   }
 
-  // hotkeys
+  // Hotkeys
   useEffect(() => {
     const onKey = (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
@@ -156,14 +193,14 @@ export default function Streaming() {
     return () => window.removeEventListener('keydown', onKey);
   }, [isLive]);
 
-  // live timer
+  // Live timer
   useEffect(() => {
     if (!isLive) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [isLive]);
 
-  // presence: viewer count from watch page
+  // Presence: viewer count from /watch page
   useEffect(() => {
     const pid = stream?.playbackId;
     if (!pid) return;
@@ -224,7 +261,7 @@ export default function Streaming() {
           )}
           {/* --- /UI Gate blocks --- */}
 
-          {/* Render the actual streaming UI only for allowed creators */}
+          {/* Render streaming UI only for allowed creators */}
           {user && canBroadcast && (
             <>
               {!stream && (
@@ -412,6 +449,7 @@ export default function Streaming() {
         </section>
       </main>
 
+      {/* Modals */}
       <DeviceCheckModal open={showDeviceCheck} onClose={() => setShowDeviceCheck(false)} />
       <ShortcutHelp open={showShortcuts} onClose={() => setShowShortcuts(false)} />
       <OverlayCustomizer

@@ -21,7 +21,7 @@ export default async function handler(req, res) {
         name: name || `stream_${uid}_${Date.now()}`,
         record,
         profiles: [
-          { name: '720p', bitrate: 2000000, fps: 30, width: 1280, height: 720 },
+          { name: '720p', bitrate: 2000000, fps: 30, width: 1280, height: 720 }, 
           { name: '480p', bitrate: 1000000, fps: 30, width: 854, height: 480 },
         ]
         // Removed meta: { nsfw } field that was causing the error
