@@ -1,7 +1,12 @@
 'use client';
+
 import Link from 'next/link';
 import { useState, useEffect, useRef } from 'react';
-import { getSupabaseClient } from '../utils/supabase/client';
+import { useRouter } from 'next/router';
+
+import { useAuth } from './AuthProvider';
+import { supabase } from '../lib/supabaseClient';
+
 
 /** Dropdown group — unchanged structure/styles */
 const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, closeMobile }) => {
@@ -12,6 +17,7 @@ const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, c
   useEffect(() => {
     if (!isOpen) return;
     const handleClick = (e) => {
+      // Don't close dropdown if clicking on a link inside the dropdown
       if (ref.current && !ref.current.contains(e.target)) {
         setActiveDropdown(null);
       }
@@ -59,9 +65,12 @@ const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, c
               }`}
               target={it.external ? '_blank' : undefined}
               rel={it.external ? 'noreferrer' : undefined}
-              onClick={() => {
-                setActiveDropdown(null);
-                if (closeMobile) closeMobile();
+              onClick={(e) => {
+                // IMPORTANT: Use setTimeout to allow navigation to happen first
+                setTimeout(() => {
+                  setActiveDropdown(null);
+                  if (closeMobile) closeMobile();
+                }, 0);
               }}
             >
               {it.label}
@@ -74,31 +83,58 @@ const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, c
 };
 
 export default function Navbar() {
+  const router = useRouter();
+  const { user } = useAuth(); // Get user from AuthContext
   const [open, setOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState(null);
+  const [userHandle, setUserHandle] = useState(null);
+  const [loggingOut, setLoggingOut] = useState(false);
 
-  // NEW: Auth state (kept tiny + client-only)
-  const [user, setUser] = useState(null);
-  const supabase = getSupabaseClient();
-
+  // Get user's handle when the user changes
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data?.user ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => sub?.subscription?.unsubscribe();
-  }, [supabase]);
+    async function getUserHandle() {
+      if (!user) {
+        setUserHandle(null);
+        return;
+      }
+
+      try {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('handle')
+          .eq('id', user.id)
+          .single();
+          
+        if (profileData?.handle) {
+          setUserHandle(profileData.handle);
+        } else {
+          setUserHandle(null);
+        }
+      } catch (error) {
+        console.error("Error getting user handle:", error);
+        setUserHandle(null);
+      }
+    }
+    
+    getUserHandle();
+  }, [user, supabase]); // Re-run when user changes
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
+    try {
+      setLoggingOut(true);
+      await supabase.auth.signOut();
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Error during logout:', error);
+      setLoggingOut(false);
+    }
   };
 
   // Your original link groups (unchanged)
   const platform = [
     { label: 'Overview', href: '/platform' },
     { label: 'Features', href: '/features' },
-    { label: 'Creator Portal', href: '/creator-portal' },
+    { label: 'Creator Portal', href: '/creator-portal' }, // Changed from '/creator'
     { label: 'Live Streaming', href: '/streaming' },
     { label: 'Gamification', href: '/gamification' },
     { label: 'Legal Hub', href: '/legalhub' },
@@ -150,7 +186,7 @@ export default function Navbar() {
         {/* Right: Creator Portal + Auth (adds buttons, doesn't change styling elsewhere) */}
         <div className="hidden md:flex items-center gap-3">
           <Link
-            href="/creator-portal"
+            href="/creator-portal" // Changed from '/creator'
             className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-pink-600 hover:bg-pink-500"
           >
             Creator Portal
@@ -159,10 +195,10 @@ export default function Navbar() {
           {user ? (
             <>
               <Link
-                href="/creator"
+                href={userHandle ? `/c/${userHandle}` : "/creator"}
                 className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
               >
-                Profile
+                {userHandle ? "My Profile" : "Create Profile"}
               </Link>
               <button
                 onClick={handleLogout}
@@ -234,27 +270,24 @@ export default function Navbar() {
             />
 
             <Link
-              href="/creator-portal"
+              href="/creator-portal" // Changed from '/creator'
               className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-pink-600 hover:bg-pink-500"
               onClick={() => setOpen(false)}
             >
               Creator Portal
             </Link>
 
-            {user ? (
+             {user ? (
               <>
                 <Link
-                  href="/creator"
+                  href={userHandle ? `/c/${userHandle}` : "/creator"}
                   className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
                   onClick={() => setOpen(false)}
                 >
-                  Profile
+                  {userHandle ? "My Profile" : "Create Profile"}
                 </Link>
                 <button
-                  onClick={() => {
-                    handleLogout();
-                    setOpen(false);
-                  }}
+                  onClick={handleLogout}
                   className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
                 >
                   Logout

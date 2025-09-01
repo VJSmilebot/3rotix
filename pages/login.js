@@ -1,36 +1,78 @@
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { getSupabaseClient } from '../utils/supabase/client';
 
-
 export default function Login() {
-const router = useRouter();
-const supabase = getSupabaseClient();
+  const router = useRouter();
+  const supabase = getSupabaseClient();
 
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-const [email, setEmail] = useState('');
-const [password, setPassword] = useState('');
-const [loading, setLoading] = useState(false);
-const [error, setError] = useState('');
+  const nextParam = typeof router.query.next === 'string' ? router.query.next : '';
+  const next = nextParam && nextParam.startsWith('/') ? nextParam : '/creator';
 
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session) {
+          // CHANGED: router.push(next) to window.location.href
+          window.location.href = next;
+        }
+      } catch (error) {
+        console.error("Error checking session:", error);
+      }
+    };
+    checkSession();
+  }, [next]); // Added next as dependency
 
-const nextParam = typeof router.query.next === 'string' ? router.query.next : '';
-const next = nextParam && nextParam.startsWith('/') ? nextParam : '/creator';
+  const handleSignIn = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
 
+      if (signInError) {
+        console.error("Sign in error:", signInError);
+        setError(signInError.message);
+        setLoading(false);
+        return;
+      }
 
-async function handleSubmit(e) {
-e.preventDefault();
-setLoading(true);
-setError('');
-const { error } = await supabase.auth.signInWithPassword({ email, password });
-if (error) {
-setError(error.message);
-setLoading(false);
-return;
-}
-// hard reload so SSR immediately sees cookies
-window.location.replace(next);
-}
+      console.log("Authentication successful", data);
+
+      // Get the user's handle from their profile
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('handle')
+        .eq('id', data.user.id)
+        .single();
+        
+      if (profileError) {
+        console.error("Profile fetch error:", profileError);
+      }
+
+      // Already using direct navigation - good!
+      if (profileData?.handle) {
+        console.log("User has handle, navigating to profile");
+        window.location.href = `/c/${profileData.handle}`;
+      } else {
+        console.log("User has no handle, navigating to creator page");
+        window.location.href = '/creator';
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      setError('An unexpected error occurred');
+      setLoading(false);
+    }
+  }
 
 
 return (
@@ -40,7 +82,7 @@ return (
 {error && (
 <div className="bg-red-500/10 text-red-400 border border-red-500 p-3 rounded">{error}</div>
 )}
-<form onSubmit={handleSubmit} className="space-y-4">
+<form onSubmit={handleSignIn} className="space-y-4">
 <div>
 <label htmlFor="email" className="block text-sm text-white">Email</label>
 <input

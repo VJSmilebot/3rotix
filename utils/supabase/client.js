@@ -1,10 +1,12 @@
-import { createPagesBrowserClient } from '@supabase/auth-helpers-nextjs';
+import { createBrowserClient } from '@supabase/ssr'
 
-
-let browserClient;
 export function getSupabaseClient() {
-if (!browserClient) {
-browserClient = createPagesBrowserClient();
-}
-return browserClient;
+  // Add caching to prevent multiple instances
+  if (!globalThis._supabaseClient) {
+    globalThis._supabaseClient = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    )
+  }
+  return globalThis._supabaseClient
 }

@@ -1,46 +1,31 @@
+// components/AgeGate.js
+'use client';
 import { useEffect, useState } from 'react';
 
-export default function AgeGate() {
-  const [isVisible, setIsVisible] = useState(false);
+export default function AgeGate({ children }) {
+  const [ready, setReady] = useState(false);
+  const [ok, setOk] = useState(false);
 
   useEffect(() => {
-    const confirmed = localStorage.getItem('ageConfirmed');
-    if (!confirmed) {
-      setIsVisible(true);
-    }
+    try { setOk(localStorage.getItem('age_ok') === '1'); } catch {}
+    setReady(true);
   }, []);
 
-  const handleConfirm = () => {
-    localStorage.setItem('ageConfirmed', 'true');
-    setIsVisible(false);
-  };
-
-  const handleReject = () => {
-    window.location.href = 'https://www.google.com';
-  };
-
-  if (!isVisible) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90 text-white">
-      <div className="max-w-md p-6 bg-gray-900 rounded-lg shadow-lg text-center">
-        <h2 className="text-xl font-bold mb-4">18+ Age Confirmation</h2>
-        <p className="mb-6">This site contains content intended for adults only. Are you 18 or older?</p>
-        <div className="flex justify-center space-x-4">
-          <button
-            onClick={handleConfirm}
-            className="px-6 py-2 bg-pink-600 text-white rounded hover:bg-pink-700"
-          >
-            Yes, Enter
-          </button>
-          <button
-            onClick={handleReject}
-            className="px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-          >
-            No, Exit
+  if (!ready) {
+    return <div className="min-h-screen grid place-items-center bg-[#0a0a0b] text-white/70">Loading…</div>;
+  }
+  if (!ok) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[#0a0a0b] text-white px-4">
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 max-w-md text-center">
+          <h2 className="text-xl font-semibold mb-2">18+ Only</h2>
+          <p className="text-white/70 mb-4">This platform is for adults. Please confirm to continue.</p>
+          <button className="rounded-xl px-4 py-2 bg-pink-600" onClick={() => { localStorage.setItem('age_ok','1'); setOk(true); }}>
+            I’m 18+
           </button>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+  return children;
 }
