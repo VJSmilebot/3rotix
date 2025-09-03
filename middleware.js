@@ -1,87 +1,52 @@
-// middleware.js
-import { NextResponse } from 'next/server';
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse } from 'next/server'
 
-// Export an empty middleware function that just passes through all requests
-export function middleware(req) {
-  return NextResponse.next();
-}
+export async function middleware(request) {
+  let response = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  })
 
-// Original middleware code (commented out)
-/*
-async function originalMiddleware(req) {
-  const res = NextResponse.next();
-  const url = req.nextUrl.clone();
-
-  // Create the Supabase client with cookies
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
-        get(name) {
-          return req.cookies.get(name)?.value;
+        getAll() {
+          return request.cookies.getAll()
         },
-        set(name, value, options) {
-          req.cookies.set({
-            name,
-            value,
-            ...options,
-          });
-          res.cookies.set({
-            name,
-            value,
-            ...options,
-          });
-        },
-        remove(name, options) {
-          req.cookies.delete({
-            name,
-            ...options,
-          });
-          res.cookies.delete({
-            name,
-            ...options,
-          });
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            request.cookies.set({ name, value, ...options })
+          })
+          response = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          })
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set({ name, value, ...options })
+          })
         },
       },
     }
-  );
+  )
 
-  // Only check protected areas
-  const protectedPaths = ['/streaming', '/composer', '/overlay'];
-  const isProtected = protectedPaths.some((p) => url.pathname.startsWith(p));
-  if (!isProtected) return res;
+  await supabase.auth.getUser()
 
-  // 1) Must be logged in
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) {
-    url.pathname = '/login';
-    url.searchParams.set('next', req.nextUrl.pathname + req.nextUrl.search);
-    return NextResponse.redirect(url);
-  }
-
-  // 2) Quick role gate (prefer user_metadata to avoid DB RTT; fall back to profiles)
-  let role = session.user.user_metadata?.role;
-  let allowed = role === 'creator' || role === 'admin';
-
-  if (!allowed) {
-    const { data: profile } = await supabase
-      .from('profiles').select('role, plan_tier, is_creator')
-      .eq('id', session.user.id).maybeSingle();
-    const plan = (profile?.plan_tier || '').toLowerCase();
-    allowed = !!profile?.is_creator || profile?.role === 'creator' || ['pro', 'creator', 'vip'].includes(plan);
-  }
-
-  if (!allowed) {
-    url.pathname = '/creator-portal'; // or '/pricing'
-    return NextResponse.redirect(url);
-  }
-
-  return res;
+  return response
 }
-*/
 
-// Empty matcher so middleware doesn't run on any routes
 export const config = {
-  matcher: [],
-};
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - api/ (API routes are handled on-demand)
+     */
+    '/((?!_next/static|_next/image|favicon.ico|api/).*)',
+  ],
+}

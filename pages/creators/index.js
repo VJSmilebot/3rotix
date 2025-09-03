@@ -1,44 +1,29 @@
-// pages/creators/index.js
 import Head from 'next/head';
 import Link from 'next/link';
 import { useMemo, useState, useEffect } from 'react';
+import { createSupabaseServerClient } from '../../utils/supabase/server';
 
-export async function getServerSideProps({ query }) {
-  // Correct PostgREST "not null" filter
-  const url =
-    `${process.env.NEXT_PUBLIC_SUPABASE_URL}` +
-    `/rest/v1/profiles?select=id,handle,display_name,bio,avatar_url,updated_at` +
-    `&handle=not.is.null&order=handle.asc`;
-
+export async function getServerSideProps({ req, res, query }) {
+  const supabase = createSupabaseServerClient(req, res);
+  
   let rows = [];
   let errorInfo = null;
 
   try {
-    const res = await fetch(url, {
-      headers: {
-        apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
-        Prefer: 'count=exact',
-      },
-    });
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id,handle,display_name,bio,avatar_url,updated_at')
+      .not('handle', 'is', null)
+      .order('handle', { ascending: true });
 
-    if (!res.ok) {
-      errorInfo = {
-        status: res.status,
-        statusText: res.statusText,
-        body: (await res.text())?.slice(0, 500),
-      };
-      console.error('[CREATORS] REST error:', errorInfo);
-    } else {
-      const json = await res.json();
-      rows = Array.isArray(json) ? json : [];
-    }
+    if (error) throw error;
+    rows = data || [];
+
   } catch (err) {
-    errorInfo = { message: 'Fetch failed', detail: String(err) };
-    console.error('[CREATORS] Fetch failed:', err);
+    errorInfo = { message: 'Supabase fetch failed', detail: String(err.message) };
+    console.error('[CREATORS] Supabase error:', err);
   }
 
-  // Pass through any initial query params (optional)
   return {
     props: {
       initialProfiles: rows,

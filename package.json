@@ -10,7 +10,6 @@
   "dependencies": {
     "@livepeer/core": "^3.3.1",
     "@livepeer/react": "^4.3.6",
-    "@supabase/auth-helpers-react": "^0.5.0",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.56.1",
     "@tensorflow/tfjs": "4.11.0",

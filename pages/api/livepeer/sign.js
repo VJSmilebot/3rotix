@@ -1,23 +1,16 @@
-// pages/api/livepeer/sign.js
 import { SignJWT, importPKCS8 } from 'jose';
-import { createClient } from '@supabase/supabase-js';
-
-// Server-only Supabase client (uses service role)
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+import { createSupabaseServerClient } from '../../../utils/supabase/server'; // <-- UPDATED IMPORT
 
 /**
  * POST /api/livepeer/sign
  * Body: { playbackId }
  * Header: Authorization: Bearer <viewer supabase access token>
- *
- * - If video is PUBLIC → returns { token: null } (no JWT needed)
- * - If PRIVATE → only the video owner gets a signed JWT
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Use our new server-side helper, passing in the request and response
+  const supabaseAdmin = createSupabaseServerClient(req, res); // <-- UPDATED
 
   try {
     const { playbackId } = req.body || {};
@@ -36,35 +29,28 @@ export default async function handler(req, res) {
     }
 
     // 2) Look up the video by playbackId
-    const { data: rows, error: dbErr } = await supabaseAdmin
+    const { data: video, error: dbErr } = await supabaseAdmin
       .from('videos')
       .select('id, user_id, visibility')
       .eq('playback_id', playbackId)
-      .limit(1);
+      .maybeSingle(); // .maybeSingle() is cleaner than .limit(1)
 
     if (dbErr) {
       console.error('Database error in sign endpoint:', dbErr);
-      // If database is unreachable, assume public video (fallback)
-      return res.status(200).json({ token: null });
+      return res.status(200).json({ token: null }); // Fallback to public
     }
 
-    const video = Array.isArray(rows) && rows[0] ? rows[0] : null;
     if (!video) {
-      // Video not found in database, assume public (fallback)
-      return res.status(200).json({ token: null });
+      return res.status(200).json({ token: null }); // Fallback to public
     }
 
     // 3) Public vs Private
     if (video.visibility !== 'private') {
-      // Public → no token needed
       return res.status(200).json({ token: null });
     }
 
-    // Private → only owner may view (you can expand this rule later)
-    if (!viewer) {
-      return res.status(401).json({ error: 'Authentication required for private video' });
-    }
-    if (viewer.id !== video.user_id) {
+    // Private → only owner may view
+    if (!viewer || viewer.id !== video.user_id) {
       return res.status(403).json({ error: 'Not allowed to view this private video' });
     }
 
@@ -78,7 +64,6 @@ export default async function handler(req, res) {
     const alg = 'RS256';
     const key = await importPKCS8(privateKey, alg);
 
-    // subject MUST be the playbackId
     const token = await new SignJWT({})
       .setProtectedHeader({ alg, kid })
       .setSubject(playbackId)

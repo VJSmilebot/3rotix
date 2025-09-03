@@ -1,54 +1,38 @@
-// pages/c/[handle].js
 import Head from 'next/head';
-import VideosGrid from '../../components/VideosGrid';
-import { useEffect, useState } from 'react';
-import { getSupabaseClient } from '../../utils/supabase/client';
-import { createServerClient } from '@supabase/ssr';
 import Link from 'next/link';
-import cookie from 'cookie';
+import { useEffect, useState } from 'react';
+import VideosGrid from '../../components/VideosGrid';
+import { getSupabaseClient } from '../../utils/supabase/client';
+import { createSupabaseServerClient } from '../../utils/supabase/server'; // <-- Use our helper
 
-export async function getServerSideProps({ params, req, res }) {
-  const handle = params.handle;
+export async function getServerSideProps({ req, res, params }) {
+  const { handle } = params;
   
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    {
-      cookies: {
-        get(name) {
-          return req.cookies[name]
-        },
-        set(name, value, options) {
-          res.setHeader('Set-Cookie', cookie.serialize(name, value, options))
-        },
-        remove(name, options) {
-          res.setHeader('Set-Cookie', cookie.serialize(name, '', { ...options, maxAge: 0 }))
-        },
-      }
-    }
-  );
+  // Use the consistent server-side helper
+  const supabase = createSupabaseServerClient(req, res);
 
-  // Use the Supabase client instead of direct API call
-  const { data: profiles, error } = await supabase
+  const { data: profile, error } = await supabase
     .from('profiles')
     .select('id, display_name, bio, avatar_url, handle, twitter, instagram, website')
     .eq('handle', handle)
     .single();
 
-  if (error || !profiles) return { notFound: true };
+  if (error || !profile) {
+    return { notFound: true };
+  }
   
   return { 
     props: { 
-      profile: profiles
+      profile: profile
     } 
   };
 }
 
+// The rest of your component remains unchanged.
 export default function PublicProfile({ profile }) {
   const [isOwner, setIsOwner] = useState(false);
   const supabase = getSupabaseClient();
   
-  // Check if the current user is the profile owner
   useEffect(() => {
     async function checkOwnership() {
       const { data } = await supabase.auth.getUser();
@@ -56,9 +40,8 @@ export default function PublicProfile({ profile }) {
         setIsOwner(true);
       }
     }
-    
     checkOwnership();
-  }, [profile.id]);
+  }, [profile.id, supabase.auth]);
 
   const { handle, display_name, bio, avatar_url, twitter, instagram, website } = profile;
 
@@ -74,10 +57,9 @@ export default function PublicProfile({ profile }) {
     background: 'rgba(255,255,255,0.03)',
   };
 
-  // Add a special style for the edit profile button
   const editProfileBtn = {
     ...linkBtn,
-    background: 'rgba(219, 39, 119, 0.1)',  // Pink but more subtle
+    background: 'rgba(219, 39, 119, 0.1)',
     border: '1px solid rgba(219, 39, 119, 0.3)',
     color: 'rgb(236, 72, 153)'
   };
@@ -93,9 +75,7 @@ export default function PublicProfile({ profile }) {
       </Head>
 
       <div style={{ maxWidth: 980, margin: '24px auto', padding: 20 }}>
-        {/* Add position relative to this container to position the edit button */}
         <div style={{ position: 'relative' }}>
-          {/* Add the Edit Profile button at the top right for owners only */}
           {isOwner && (
             <div style={{ position: 'absolute', top: 0, right: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <Link 
@@ -110,12 +90,11 @@ export default function PublicProfile({ profile }) {
                 Edit Profile
               </Link>
               
-              {/* New Content Studio button */}
               <Link 
                 href="/studio"
                 style={{
                   ...editProfileBtn,
-                  background: 'rgba(59, 130, 246, 0.1)',  // Blue but subtle
+                  background: 'rgba(59, 130, 246, 0.1)',
                   border: '1px solid rgba(59, 130, 246, 0.3)',
                   color: 'rgb(96, 165, 250)'
                 }}
@@ -145,30 +124,27 @@ export default function PublicProfile({ profile }) {
               <h1 style={{ margin: 0 }}>{display_name || handle}</h1>
               <div style={{ opacity: 0.8 }}>@{handle}</div>
               <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-                {/* Remove the Edit Profile button from here */}
-                
                 {website && (
-                  <Link 
+                  <a 
                     href={website} 
                     target="_blank" 
-                    rel="noreferrer" 
+                    rel="noopener noreferrer" 
                     style={linkBtn}
                     className="flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                       <path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18Z" stroke="currentColor"/>
-                      <path d="M3 12h18M12 3c3 3 3 15 0 18c-3-3-3-15 0-18Z" stroke="currentColor"/>
+                      <path d="M3 12h18M12 3c3 3 3 15 0 18c-3-3-15 0-18Z" stroke="currentColor"/>
                     </svg>
                     Website
-                  </Link>
+                  </a>
                 )}
                 
-                {/* Fix these links as well to follow the same pattern */}
                 {twitter && (
-                  <Link
+                  <a
                     href={twitter}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     style={linkBtn}
                     className="flex items-center gap-2"
                   >
@@ -176,13 +152,13 @@ export default function PublicProfile({ profile }) {
                       <path d="M22 5.8c-.7.3-1.5.6-2.3.7c.8-.5 1.4-1.2 1.7-2.2c-.8.5-1.7.9-2.6 1.1C18 4.6 17 4 15.8 4c-2.2 0-3.8 2-3.3 4.1A7.7 7.7 0 0 1 4.1 5c-.8 1.5-.4 3.4 1 4.3c-.6 0-1.2-.2-1.7-.5c0 1.7 1.2 3.3 3.1 3.7c-.5.1-1 .1-1.5 0c.4 1.4 1.8 2.5 3.4 2.6c-1.3 1-3 1.5-4.7 1.3c1.7 1.1 3.7 1.7 5.8 1.7c7 0 10.9-6 10.7-11.4c.7-.5 1.3-1.1 1.8-1.9Z"/>
                     </svg>
                     Twitter
-                  </Link>
+                  </a>
                 )}
                 {instagram && (
-                  <Link
+                  <a
                     href={instagram}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     style={linkBtn}
                     className="flex items-center gap-2"
                   >
@@ -192,7 +168,7 @@ export default function PublicProfile({ profile }) {
                       <circle cx="18" cy="9" r="1" fill="currentColor"/>
                     </svg>
                     Instagram
-                  </Link>
+                  </a>
                 )}
               </div>
             </div>
@@ -201,7 +177,6 @@ export default function PublicProfile({ profile }) {
           {bio && <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{bio}</p>}
         </div>
 
-        {/* Add the video grid below the bio */}
         <div style={{ marginTop: 32 }}>
           <VideosGrid userId={profile.id} />
         </div>
