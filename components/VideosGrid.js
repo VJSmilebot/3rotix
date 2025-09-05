@@ -63,7 +63,11 @@ export default function VideosGrid({ userId }) {
                 <div className="title" title={v.title || ''}>
                   {v.title || 'Untitled'}
                 </div>
+<<<<<<< HEAD
                 <Link className="watch" href={`/watch/${v.playback_id}`}>
+=======
+                <Link className="watch" href={`/watch/uploads/${v.playback_id}`}>
+>>>>>>> fix/supabase-ssr-migration2
                   Watch →
                 </Link>
               </div>

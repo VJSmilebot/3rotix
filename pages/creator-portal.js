@@ -71,6 +71,13 @@ export default function CreatorPortal() {
           >
             Community
           </a>
+
+          <a
+            href="/creators"
+            className="px-6 py-3 rounded-lg border border-white/20 text-white hover:bg-white/10 font-semibold"
+          >
+            Our Creators
+          </a>
         </div>
       </div>
     </div>

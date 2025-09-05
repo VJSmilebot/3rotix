@@ -1,5 +1,9 @@
 // pages/tools.js
 import Head from "next/head";
+<<<<<<< HEAD
+=======
+import Link from "next/link";
+>>>>>>> fix/supabase-ssr-migration2
 
 export default function Tools() {
   return (
@@ -25,10 +29,19 @@ export default function Tools() {
         {/* Content Tools */}
         <section>
           <h2 className="text-2xl font-semibold mb-4 text-pink-400">Content Tools</h2>
+<<<<<<< HEAD
           <div className="flex flex-wrap gap-3">
             <button className="px-4 py-2 bg-pink-600 hover:bg-pink-700 rounded-lg text-white">
               Image Upscaler — HD Fix
             </button>
+=======
+          <div className="flex flex-wrap gap-3"> 
+        <Link href="/tools/upscaler" passHref>
+            <button className="px-4 py-2 bg-pink-600 hover:bg-pink-700 rounded-lg text-white">
+              Image Upscaler — HD Fix
+            </button>
+        </Link>
+>>>>>>> fix/supabase-ssr-migration2
             <button disabled className="px-4 py-2 bg-gray-800 rounded-lg text-gray-500 cursor-not-allowed">
               Video Splicer — AI Editing
             </button>

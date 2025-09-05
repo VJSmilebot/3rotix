@@ -12,6 +12,7 @@ export default function LoginPage() {
     e.preventDefault();
     const { error } = await supabase.auth.signUp({ email, password });
     if (error) return alert(error.message);
+    alert('Check your email for a confirmation link!');
     router.push('/');
   };
 
@@ -29,7 +30,7 @@ export default function LoginPage() {
     padding: '10px',
     border: '1px solid #ccc',
     borderRadius: 6,
-    color: '#000',            // <-- black input text
+    color: '#000',
     backgroundColor: '#fff',
   };
 

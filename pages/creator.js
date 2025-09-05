@@ -1,4 +1,3 @@
-// pages/creator.js
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -9,126 +8,83 @@ export default function CreatorPage() {
   const supabase = getSupabaseClient();
   const router = useRouter();
 
-  // auth + profile state
   const [user, setUser] = useState(null);
-  const [displayName, setDisplayName] = useState('');
-  const [bio, setBio] = useState('');
-  const [avatarUrl, setAvatarUrl] = useState('');
-  const [handle, setHandle] = useState('');
-
-  // social links
-  const [twitter, setTwitter] = useState('');
-  const [instagram, setInstagram] = useState('');
-  const [website, setWebsite] = useState('');
-
-  // videos
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState({
+    display_name: '',
+    bio: '',
+    avatar_url: '',
+    handle: '',
+    twitter: '',
+    instagram: '',
+    website: '',
+  });
   const [myVideos, setMyVideos] = useState([]);
-
   const [saving, setSaving] = useState(false);
 
-  // gate: must be logged in, then load profile + videos
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (!data?.user) {
+    const loadUserData = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
         router.push('/login');
         return;
       }
-      setUser(data.user);
+      
+      setUser(user);
 
-      // load profile
-      const { data: profile } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
         .select('display_name, bio, avatar_url, handle, twitter, instagram, website')
-        .eq('id', data.user.id)
+        .eq('id', user.id)
         .single();
 
-      if (profile) {
-        setDisplayName(profile.display_name || '');
-        setBio(profile.bio || '');
-        setAvatarUrl(profile.avatar_url || '');
-        setHandle(profile.handle || '');
-        setTwitter(profile.twitter || '');
-        setInstagram(profile.instagram || '');
-        setWebsite(profile.website || '');
+      if (profileData) {
+        setProfile(profileData);
       }
 
-      // load user videos (own + any visibility)
-      const { data: vids } = await supabase
-        .from('videos')
-        .select('id, title, playback_id, visibility, created_at')
-        .order('created_at', { ascending: false });
-      setMyVideos(vids || []);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      await refreshMyVideos(user.id);
+      setLoading(false);
+    };
 
-  // helpers
-  const validateHandle = (h) => /^[a-z0-9_]{3,20}$/i.test(h || '');
+    loadUserData();
+  }, [router, supabase]);
 
-  const normalizeUrl = (value) => {
-    if (!value) return '';
-    const v = value.trim();
-    if (/^https?:\/\//i.test(v)) return v;
-    return `https://${v}`;
+  const refreshMyVideos = async (userId) => {
+    if (!userId) return;
+    const { data: vids } = await supabase
+      .from('videos')
+      .select('id, title, playback_id, visibility, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    setMyVideos(vids || []);
   };
-  const normalizeTwitter = (value) => {
-    if (!value) return '';
-    let v = value.trim().replace(/^@/, '');
-    if (/^https?:\/\//i.test(v)) return v;
-    return `https://twitter.com/${v}`;
-  };
-  const normalizeInstagram = (value) => {
-    if (!value) return '';
-    let v = value.trim().replace(/^@/, '');
-    if (/^https?:\/\//i.test(v)) return v;
-    return `https://instagram.com/${v}`;
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setProfile(prev => ({ ...prev, [name]: value }));
   };
 
   const handleSave = async () => {
     if (!user) return;
-
-    if (!handle || !validateHandle(handle)) {
-      alert('Pick a handle: 3–20 letters/numbers/underscore');
-      return;
-    }
-
-    // ensure unique handle (case-insensitive)
-    const { data: exists } = await supabase
-      .from('profiles')
-      .select('id')
-      .neq('id', user.id)
-      .ilike('handle', handle)
-      .maybeSingle();
-
-    if (exists) {
-      alert('That handle is already taken.');
-      return;
-    }
-
     setSaving(true);
+
     const { error } = await supabase
       .from('profiles')
-      .upsert({
-        id: user.id,
-        display_name: displayName,
-        bio,
-        avatar_url: avatarUrl,
-        handle,
-        twitter: twitter ? normalizeTwitter(twitter) : null,
-        instagram: instagram ? normalizeInstagram(instagram) : null,
-        website: website ? normalizeUrl(website) : null,
-        updated_at: new Date().toISOString(),
-      });
+      .upsert({ id: user.id, ...profile, updated_at: new Date().toISOString() });
+    
     setSaving(false);
-    if (error) return alert(error.message);
-    alert('Saved!');
+    if (error) {
+      alert(error.message);
+    } else {
+      alert('Profile saved!');
+    }
   };
 
   const handleAvatarChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    // upload to Storage bucket "avatars" at <user.id>/avatar.ext
     const fileExt = file.name.split('.').pop();
     const fileName = `avatar.${fileExt}`;
     const filePath = `${user.id}/${fileName}`;
@@ -142,148 +98,102 @@ export default function CreatorPage() {
       return;
     }
 
-    // public URL (bucket should be public per earlier steps)
     const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
-    setAvatarUrl(data.publicUrl);
+    setProfile(prev => ({ ...prev, avatar_url: data.publicUrl }));
   };
 
-  // refresh videos after an uploader finishes
-  const refreshMyVideos = async () => {
-    const { data: vids } = await supabase
-      .from('videos')
-      .select('id, title, playback_id, visibility, created_at')
-      .order('created_at', { ascending: false });
-    setMyVideos(vids || []);
-  };
-
-  if (!user) return <p style={{ padding: 20 }}>Loading…</p>;
-
-  // simple styling
-  const input = {
-    width: '100%',
-    padding: '10px',
-    border: '1px solid #ccc',
-    borderRadius: 8,
-    color: '#000',
-    background: '#fff',
-    marginBottom: 10,
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading...</div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ maxWidth: 900, margin: '24px auto', padding: 20 }}>
-      <h1 style={{ marginBottom: 12 }}>Creator Profile</h1>
+    <div className="min-h-screen bg-gray-900 text-white p-6">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-3xl font-bold mb-6">Creator Dashboard</h1>
+        
+        <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-6 mb-8">
+            <h2 className="text-2xl font-bold mb-4">Edit Profile</h2>
+            <form onSubmit={(e) => { e.preventDefault(); handleSave(); }} className="space-y-6">
+                {/* Avatar and Basic Info */}
+                <div className="flex items-center gap-6">
+                    <div className="relative">
+                        <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-700 flex items-center justify-center border-2 border-gray-600">
+                            {profile.avatar_url ? (
+                                <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                            ) : (
+                                <span className="text-gray-400 text-sm">Photo</span>
+                            )}
+                        </div>
+                        <label htmlFor="avatar-upload" className="absolute -bottom-1 -right-1 bg-pink-600 rounded-full p-2 cursor-pointer hover:bg-pink-500">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                        </label>
+                        <input id="avatar-upload" type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
+                    </div>
+                    <div className="flex-grow">
+                        <label htmlFor="display_name" className="block text-sm font-medium text-gray-300 mb-1">Display Name</label>
+                        <input type="text" id="display_name" name="display_name" value={profile.display_name || ''} onChange={handleInputChange} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md" />
+                    </div>
+                    <div className="flex-grow">
+                        <label htmlFor="handle" className="block text-sm font-medium text-gray-300 mb-1">Handle</label>
+                        <div className="flex">
+                            <span className="inline-flex items-center px-3 bg-gray-700 border border-r-0 border-gray-700 rounded-l-md text-gray-400">@</span>
+                            <input type="text" id="handle" name="handle" value={profile.handle || ''} onChange={handleInputChange} className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-r-md" />
+                        </div>
+                    </div>
+                </div>
 
-      <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        {/* Avatar */}
-        <div>
-          <div style={{
-            width: 140, height: 140, borderRadius: '50%', overflow: 'hidden',
-            background: '#111', border: '1px solid #333', display: 'grid', placeItems: 'center'
-          }}>
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              <span style={{ color: '#666', fontSize: 12 }}>No photo</span>
-            )}
-          </div>
-          <label style={{ display: 'block', marginTop: 10 }}>
-            <input type="file" accept="image/*" onChange={handleAvatarChange} />
-          </label>
+                {/* Bio */}
+                <div>
+                    <label htmlFor="bio" className="block text-sm font-medium text-gray-300 mb-1">Bio</label>
+                    <textarea id="bio" name="bio" value={profile.bio || ''} onChange={handleInputChange} rows={3} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md" />
+                </div>
+
+                {/* Social Links */}
+                <div className="grid md:grid-cols-3 gap-4">
+                    <div>
+                        <label htmlFor="website" className="block text-sm font-medium text-gray-300 mb-1">Website URL</label>
+                        <input type="url" id="website" name="website" value={profile.website || ''} onChange={handleInputChange} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md" />
+                    </div>
+                    <div>
+                        <label htmlFor="twitter" className="block text-sm font-medium text-gray-300 mb-1">Twitter URL</label>
+                        <input type="url" id="twitter" name="twitter" value={profile.twitter || ''} onChange={handleInputChange} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md" />
+                    </div>
+                    <div>
+                        <label htmlFor="instagram" className="block text-sm font-medium text-gray-300 mb-1">Instagram URL</label>
+                        <input type="url" id="instagram" name="instagram" value={profile.instagram || ''} onChange={handleInputChange} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md" />
+                    </div>
+                </div>
+
+                <div className="pt-2">
+                    <button type="submit" disabled={saving} className="w-full md:w-auto py-2 px-6 bg-pink-600 hover:bg-pink-500 rounded-md font-medium disabled:opacity-70">
+                        {saving ? 'Saving...' : 'Save Profile'}
+                    </button>
+                </div>
+            </form>
         </div>
 
-        {/* Fields */}
-        <div style={{ flex: 1, minWidth: 300 }}>
-          <label>Handle (for your URL)</label>
-          <input
-            style={input}
-            value={handle}
-            onChange={(e) => setHandle(e.target.value.trim())}
-            placeholder="e.g. smilebot"
-          />
-          <div style={{ margin: '6px 0 14px', fontSize: 12, opacity: 0.8 }}>
-            Your public page will be <code>/c/{handle || 'your-handle'}</code>
-          </div>
+        <VideoUploader onFinished={() => refreshMyVideos(user?.id)} />
 
-          <label>Display Name</label>
-          <input
-            style={input}
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Your display name"
-          />
-
-          <label>Bio</label>
-          <textarea
-            style={{ ...input, minHeight: 120, resize: 'vertical' }}
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-            placeholder="Tell fans who you are…"
-          />
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <label>Twitter (handle or URL)</label>
-              <input
-                style={input}
-                value={twitter}
-                onChange={(e) => setTwitter(e.target.value)}
-                placeholder="@yourhandle or https://twitter.com/yourhandle"
-              />
+        <div className="mt-8">
+            <h2 className="text-2xl font-bold mb-4">My Videos</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {(myVideos || []).map((v) => (
+                    <div key={v.id} className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                        <div className="font-bold truncate">{v.title || 'Untitled'}</div>
+                        <div className="text-sm opacity-70 mb-2 uppercase">{v.visibility || 'PUBLIC'}</div>
+                        {v.playback_id ? (
+                            <Link href={`/watch/${v.playback_id}`} className="text-pink-400 hover:underline">Watch →</Link>
+                        ) : (
+                            <span className="opacity-50">Processing...</span>
+                        )}
+                    </div>
+                ))}
             </div>
-            <div>
-              <label>Instagram (handle or URL)</label>
-              <input
-                style={input}
-                value={instagram}
-                onChange={(e) => setInstagram(e.target.value)}
-                placeholder="@yourhandle or https://instagram.com/yourhandle"
-              />
-            </div>
-          </div>
-
-          <label>Website</label>
-          <input
-            style={input}
-            value={website}
-            onChange={(e) => setWebsite(e.target.value)}
-            placeholder="https://your-site.com"
-          />
-
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            style={{ padding: '10px 14px', border: '1px solid #444', borderRadius: 8 }}
-          >
-            {saving ? 'Saving…' : 'Save Profile'}
-          </button>
         </div>
-      </div>
-
-      {/* Videos */}
-      <hr style={{ margin: '24px 0', borderColor: '#333' }} />
-      <h2 style={{ marginBottom: 12 }}>Your Videos</h2>
-
-      <VideoUploader onFinished={refreshMyVideos} />
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-          gap: 16,
-          marginTop: 16,
-        }}
-      >
-        {(myVideos || []).map((v) => (
-          <div key={v.id} style={{ border: '1px solid #2a2a2a', borderRadius: 12, padding: 12 }}>
-            <div style={{ fontWeight: 600 }}>{v.title || 'Untitled'}</div>
-            <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
-              {v.visibility?.toUpperCase() || 'PUBLIC'}
-            </div>
-            <Link href={`/watch/${v.playback_id}`} style={{ textDecoration: 'underline' }}>
-              Watch →
-            </Link>
-          </div>
-        ))}
       </div>
     </div>
   );
