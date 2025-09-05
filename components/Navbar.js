@@ -151,7 +151,7 @@ export default function Navbar() {
   const community = [
     { label: 'Join Telegram', href: 'https://t.co/XAhdPTMnMg', external: true },
     { label: 'Announcements / Blog', href: '/blog' },
-    { label: 'Early Access / Waitlist', href: '/waitlist' },
+    { label: 'Early Access / Waitlist', href: '/fan-portal' },
     { label: 'Events & Streams', href: '/events' },
     { label: 'Support', href: '/support' },
   ];
@@ -162,7 +162,7 @@ export default function Navbar() {
     { label: 'Media / Press Kit', href: '/media' },
     { label: 'Contact', href: '/contact' },
     { label: 'Community Guidelines', href: '/legal/guidelines' },
-    { label: 'Terms of Service', href: '/legal/tos' },
+    { label: 'Terms of Service', href: '/legal/terms' },
     { label: 'Performer Release', href: '/legal/release' },
   ];
 
