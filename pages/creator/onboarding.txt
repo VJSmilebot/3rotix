@@ -1,0 +1,10 @@
+// pages/creator/onboarding.jsx
+import CreatorOnboardingChecklist from "../../components/CreatorOnboardingChecklist";
+
+export default function CreatorOnboardingPage() {
+  return (
+    <div className="min-h-screen bg-black text-white px-4 py-10">
+      <CreatorOnboardingChecklist />
+    </div>
+  );
+}

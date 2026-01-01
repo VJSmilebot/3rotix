@@ -1,0 +1,17 @@
+# dependencies
+node_modules/
+
+# build output
+.next/
+
+# system files
+.DS_Store
+
+# env files
+.env
+.env.local
+
+/public/models
+
+
+/lib/generated/prisma

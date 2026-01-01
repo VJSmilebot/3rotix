@@ -1,0 +1,235 @@
+{
+  "main": {
+    "id": "95e6b7e0165f1dd9",
+    "type": "split",
+    "children": [
+      {
+        "id": "b12f89c67d5c6198",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "3e9aa9a67eec262e",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "TODO 1.md",
+                "mode": "preview",
+                "source": true
+              },
+              "icon": "lucide-file",
+              "title": "TODO 1"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "7af84d62d4e192ff",
+    "type": "split",
+    "children": [
+      {
+        "id": "8173145f8dc4dd5a",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "f973ca44bdd55479",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "b702f6ef04ffba50",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "546fa3f3462327f2",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 200
+  },
+  "right": {
+    "id": "1022990de0ad0a05",
+    "type": "split",
+    "children": [
+      {
+        "id": "974b34b1d8990bdf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "3b542896a93cd2cb",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "TODO 1.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for TODO 1"
+            }
+          },
+          {
+            "id": "a8cc762f32b9a84b",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "TODO 1.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from TODO 1"
+            }
+          },
+          {
+            "id": "1362ee2ff264cae2",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "9d8ed1f2b5ccf5d2",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "70899fc6610561c7",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "TODO 1.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of TODO 1"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "3e9aa9a67eec262e",
+  "lastOpenFiles": [
+    "node_modules/@upstash/redis/package.json",
+    "node_modules/@upstash/ratelimit/dist/index.mjs",
+    "node_modules/@img/sharp-linux-arm64",
+    "node_modules/@img/sharp-linux-arm",
+    "node_modules/@img/sharp-libvips-linuxmusl-x64",
+    "node_modules/@img/sharp-libvips-linuxmusl-arm64",
+    "node_modules/@img/sharp-libvips-linux-s390x",
+    "node_modules/@img/sharp-libvips-linux-arm64",
+    "node_modules/next/dist/compiled/browserify-zlib/package.json",
+    "node_modules/next/dist/compiled/browserify-zlib/LICENSE",
+    "node_modules/next/dist/compiled/browserify-zlib/index.js",
+    "node_modules/next/wasm/@next/swc-wasm-nodejs/README.md",
+    "node_modules/next/dist/compiled/react-is/README.md",
+    "node_modules/next/dist/compiled/react-refresh/README.md",
+    "node_modules/core-js/README.md",
+    "node_modules/core-js/internals/README.md",
+    "node_modules/core-js/full/README.md",
+    "node_modules/core-js/es/README.md",
+    "node_modules/core-js/actual/README.md",
+    "node_modules/@tensorflow/tfjs-core/README.md",
+    "node_modules/@upscalerjs/esrgan-thick/assets/samples/4x/result.png",
+    "node_modules/@upscalerjs/esrgan-thick/assets/samples/8x/result.png",
+    "node_modules/@upscalerjs/esrgan-thick/assets/samples/3x/result.png",
+    "node_modules/@upscalerjs/esrgan-thick/assets/samples/2x/result.png",
+    "node_modules/@upscalerjs/esrgan-thick/assets/fixture.png",
+    "node_modules/@upscalerjs/esrgan-thick/README.md",
+    "node_modules/livepeer/README.md",
+    "node_modules/livepeer/example/readme.md",
+    "node_modules/livepeer/docs/sdks/webhook/README.md",
+    "node_modules/livepeer/docs/sdks/task/README.md",
+    "node_modules/livepeer/docs/sdks/transcode/README.md",
+    "node_modules/livepeer/docs/sdks/stream/README.md",
+    "node_modules/livepeer/docs/sdks/playback/README.md",
+    "node_modules/livepeer/docs/sdks/session/README.md",
+    "node_modules/livepeer/docs/sdks/room/README.md",
+    "node_modules/livepeer/docs/sdks/multistream/README.md",
+    "node_modules/livepeer/docs/sdks/metrics/README.md",
+    "node_modules/livepeer/docs/sdks/livepeer/README.md",
+    "node_modules/livepeer/docs/sdks/generate/README.md",
+    "node_modules/livepeer/docs/sdks/accesscontrol/README.md",
+    "node_modules/livepeer/docs/sdks/asset/README.md",
+    "node_modules/postmark/postmark.png",
+    "node_modules/prisma/build/public/assets/tick.8cbb6a93.svg",
+    "node_modules/prisma/build/public/assets/tick-indeterminate.aec8a44d.svg",
+    "node_modules/prisma/build/public/assets/sun.89774753.svg",
+    "node_modules/prisma/build/public/assets/string.ea615a24.svg"
+  ]
+}

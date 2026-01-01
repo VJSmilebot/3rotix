@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    /* ---------------- Core Behavior ---------------- */
+    "target": "ES2020",
+    "lib": ["esnext"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "jsx": "preserve",
+    "allowJs": true,              // allows .js files in the build
+    "checkJs": false,             // don’t spam type errors inside .js files
+    "noEmit": true,               // Next.js handles output
+    "incremental": true,
+    "sourceMap": true,
+    "outDir": "dist",
+
+    /* ---------------- Type Checking ---------------- */
+    "strict": true,              // keep loose for now
+    "skipLibCheck": true,         // skip @types checking for speed
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    /* ---------------- Path Aliases ---------------- */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["*"]
+    }
+  },
+
+  /* ---------------- Included Files ---------------- */
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.js",
+    "**/*.jsx"
+  ],
+  "exclude": ["node_modules"]
+}

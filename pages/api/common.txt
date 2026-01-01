@@ -1,0 +1,6 @@
+ cd d:\3rotix-migration
+
+UPSTASH_REDIS_REST_URL="https://super-hedgehog-11329.upstash.io"
+UPSTASH_REDIS_REST_TOKEN="ASxBAAIncDI4Njg0NDNjZWY1ODY0YTY2YmQwYmJmMWZkNjk5NjRlM3AyMTEzMjk"
+
+demo user id  :  cmgsx6r8h0000ti5olj6juggf
