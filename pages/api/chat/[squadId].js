@@ -7,8 +7,23 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// helper: keep response shape compatible with BOTH:
+// - clients expecting `result.message`
+// - clients expecting the message object directly
+function jsonMessageResponse(res, message, rewards) {
+  return res.status(200).json({
+    message,
+    rewards,
+    ...message,
+  });
+}
+
 export default async function handler(req, res) {
   const { squadId } = req.query;
+
+  if (!squadId || typeof squadId !== 'string') {
+    return res.status(400).json({ error: 'Missing squadId' });
+  }
 
   if (req.method === 'GET') {
     try {
@@ -63,7 +78,7 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const { content, replyToId, mediaUrl, mediaType } = req.body;
+      const { content, replyToId, mediaUrl, mediaType } = req.body || {};
 
       if (!content && !mediaUrl) {
         return res.status(400).json({ error: 'Missing required fields' });
@@ -74,9 +89,9 @@ export default async function handler(req, res) {
           squadId,
           userId: user.id,
           content: content || '',
-          mediaUrl,
-          mediaType,
-          replyToId,
+          mediaUrl: mediaUrl || null,
+          mediaType: mediaType || null,
+          replyToId: replyToId || null,
         },
         include: {
           user: {
@@ -91,24 +106,38 @@ export default async function handler(req, res) {
         },
       });
 
-      // Track chat XP
-      const { trackChatActivity } = require('../../../utils/chat-tracker');
-      await trackChatActivity({
-        userId: user.id,
-        messageCount: 1,
-        messageText: content,
-        messageId: message.id,
-        source: "SQUAD",
-      });
+      // ✅ IMPORTANT: XP tracking must never break chat send.
+      // If Prisma transaction times out, we log it and continue.
+      let rewards = { xp: { total: 0 } };
+      try {
+        const { trackChatActivity } = require('../../../utils/chat-tracker');
 
-      // Broadcast via Supabase Realtime
-      await supabase.channel(`squad-chat-${squadId}`).send({
-        type: 'broadcast',
-        event: 'new-message',
-        payload: message,
-      });
+        const maybeRewards = await trackChatActivity({
+          userId: user.id,
+          messageCount: 1,
+          messageText: content,
+          messageId: message.id,
+          source: 'SQUAD',
+        });
 
-      return res.status(200).json(message);
+        // if your tracker returns something, keep it
+        if (maybeRewards) rewards = maybeRewards;
+      } catch (err) {
+        console.error('trackChatActivity failed (non-blocking):', err);
+      }
+
+      // Broadcast via Supabase Realtime (best-effort)
+      try {
+        await supabase.channel(`squad-chat-${squadId}`).send({
+          type: 'broadcast',
+          event: 'new-message',
+          payload: { message, rewards },
+        });
+      } catch (err) {
+        console.warn('Supabase broadcast failed (non-blocking):', err);
+      }
+
+      return jsonMessageResponse(res, message, rewards);
     } catch (error) {
       console.error('Create message error:', error);
       return res.status(500).json({ error: 'Failed to send message' });

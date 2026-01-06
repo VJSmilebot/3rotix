@@ -1,109 +1,150 @@
-# AI_RULES
+﻿# AI_RULES (3ROTIX) — Canonical Engineering Rules
 
-These rules exist to stop Copilot/Cline/ChatGPT from freelancing changes that break 3rotix. Follow these rules before writing or suggesting code.
+**Status:** Source of Truth  
+**Applies to:** Entire repo  
+**Canon docs (MUST READ FIRST):**
+1) `/ARCHITECTURE.md` (v1.6)
+2) `/AI_RULES.md` (this file)
+3) `/XP_TRIGGERS.md`
 
-## 1. Mandatory reading order
-
-Before proposing changes:
-1. Read `ARCHITECTURE.md`
-2. Read `XP_TRIGGERS.md` (once it exists)
-3. Then read the target file(s)
-
-If any conflict exists, the docs are the source of truth.
+If anything conflicts: **ARCHITECTURE.md wins.**
 
 ---
 
-## 2. Hard bans
+## 0) Non-Negotiables
 
-Do not introduce or reintroduce:
-- NextAuth (no `next-auth`, no `getServerSession`, no `authOptions`, no `[...nextauth]`)
-- Multiple Prisma clients or duplicate prisma helper files
-- Direct DB reads/writes via Supabase client in application code
-- Prisma migrations (`prisma migrate dev`, `migrate deploy`) as the schema source of truth
-- Placeholder fields like `id: String` in any Prisma create/upsert calls
-
----
-
-## 3. Allowed Supabase usage
-
-Supabase is allowed for:
-- Client auth session
-- Storage uploads/downloads
-
-Supabase is not allowed for:
-- Querying or mutating core application tables (use Prisma)
-
-Use only the canonical modules:
-- `lib/supabaseClient.js` exporting `supabase`
-- `lib/supabaseAdmin.js` exporting `supabaseAdmin`
+- **No NextAuth. Ever.** Supabase Auth is the only authentication system.
+- **No Prisma migrations.** Do not run:
+  - `prisma migrate dev`
+  - `prisma migrate deploy`
+  - Any migration commands in CI/production  
+  Schema changes happen via **Supabase SQL**, then:
+  - `prisma db pull`
+  - `prisma generate`
+- **Prisma is PUBLIC-only.** Models map to the `public` schema only.
+- **All XP writes go through `lib/xp.js` only.** Never write XP or XPLog anywhere else.
+- **Authorization source:** `public.User.role` (Prisma).  
+  JWT claims are **verification only**, not authority for admin/mod.
+- **One Prisma client singleton** (`lib/prisma.js`). No other PrismaClient instances.
+- **No service role on the client.** `SUPABASE_SERVICE_ROLE_KEY` must never touch browser bundles.
 
 ---
 
-## 4. Prisma rules
+## 1) Package / Version Rules (Pinned)
 
-- DB access is Prisma only.
-- Do not add new models lightly.
-- Do not change schema casually.
-- If schema changes are needed:
-  - propose the Supabase SQL change first
-  - then update `prisma/schema.prisma`
-  - then run `npx prisma generate`
+- Use **pnpm**.
+- Commit `pnpm-lock.yaml`. Never delete it.
+- Keep versions pinned exactly as specified in `/ARCHITECTURE.md` (v1.6).
+- If dependencies drift from the pinned versions, fix with pnpm using exact pins.
 
-IDs:
-- If a model uses `@default(uuid())`, never pass `id` in create/upsert.
-- If a model does not generate `id`, generate a real UUID and pass it explicitly.
-- Never use placeholder `id` values.
-
----
-
-## 5. XP and achievements rules
-
-- Do not award XP directly in pages/components.
-- Do not modify `User.totalXp` directly in random routes.
-- All XP must be awarded via centralized utilities (xp/achievement/tracker layer).
-- Every XP event must create an `XPLog` row.
-- Every XP award must use an idempotency strategy to avoid duplicates.
-
-If adding a new XP trigger:
-- Update `XP_TRIGGERS.md` first
-- Then implement in the correct central location
-- Then add a test path (script or endpoint) to verify it
+**Expected pin targets (current canon):**
+- `prisma` = `6.19.1` (devDependencies)
+- `@prisma/client` = `6.19.1` (dependencies)
+- `@supabase/ssr` = `0.6.1`
+- `@supabase/supabase-js` = `2.56.1`
+- `next` = `13.4.19`
 
 ---
 
-## 6. Transactions and counters
+## 2) Canonical Files & Imports
 
-If a change affects both:
-- a membership row and a squad memberCount
-- a message row and derived stats
-- XP logs and user totals
+### Prisma
+- Only import prisma from:
+  - `lib/prisma.js`
 
-Then it must use `prisma.$transaction` or an equivalent safe pattern.
+### Supabase Clients (only these)
+- Browser:
+  - `utils/supabase/client.js`
+- Server (API routes + SSR helpers):
+  - `utils/supabase/server.js`
+- Service role (admin-only server tasks):
+  - `lib/supabaseAdmin.js`
 
-Never update a counter without updating the underlying row change in the same operation.
-
----
-
-## 7. Editing discipline
-
-When editing code:
-- Make minimal, targeted changes.
-- Do not refactor unrelated files.
-- Do not introduce new libraries unless requested.
-- Keep consistent style (CommonJS vs ESM) with the file’s existing pattern.
-- Prefer adding small, testable functions over large rewrites.
-
-If you are unsure:
-- Ask for the relevant file(s) instead of guessing.
+**Forbidden:**
+- Creating ad-hoc Supabase clients inside random API files
+- Copy/pasted supabase client snippets across the repo
 
 ---
 
-## 8. Output expectations for suggested changes
+## 3) Runtime Rules (Where code is allowed)
 
-Any suggestion must include:
-- What file(s) change
-- Why the change is needed
-- How it aligns with `ARCHITECTURE.md`
-- How to test it quickly (one command or one manual flow)
+### Middleware (Edge)
+- **No Prisma**
+- Only job: `updateSession()` proxy for **page routes**
+- Middleware does **not** run on `/api/*`
 
-If it cannot be tested easily, it is not ready to merge.
+### API Routes (Node.js)
+- Prisma allowed
+- All routes must use:
+  - `requireAuth()` or `requireAdmin()` from `lib/auth-middleware.js`
+
+### Client Components (Browser)
+- No Prisma
+- No service role
+- Use `useAuth()` from `context/AuthContext.js`
+
+---
+
+## 4) Auth Rules
+
+### Standard routes
+- Gate access via `getUser()` (Supabase SSR server client)
+- Authorize via Prisma `public.User.role`
+
+### Elevated routes (admin, payouts, moderation)
+- Verify JWT signature via `getClaims()` **(verification only)**
+- Authorize via Prisma `public.User.role`
+
+### Profile existence
+- On first authenticated use, ensure `public.User` exists (auto-provision route like `/pages/api/user/ensure.js`).
+- Do not assume the Prisma User row exists just because Supabase Auth user exists.
+
+---
+
+## 5) Prisma Rules
+
+- **Singleton only** (`lib/prisma.js`)
+- Use `prisma.$transaction()` for multi-write operations.
+- Never connect Prisma through transaction pooler mode.
+- DATABASE connections:
+  - `DATABASE_URL` uses Supavisor session pooler (5432)
+  - `DIRECT_URL` is used for CLI tasks (db pull/generate)
+
+---
+
+## 6) XP Rules (Hard Law)
+
+### Canonical XP modules
+- XP awarding: `lib/xp.js`
+- Trigger definitions: `/XP_TRIGGERS.md`
+
+### Idempotency (required)
+- Every XP award must include a stable `idempotencyKey`.
+- `XPLog.idempotencyKey` is **NON-NULLABLE**.
+- Use unique constraint: `@@unique([userId, idempotencyKey])`
+- Concurrency-safe pattern: create XPLog first, catch `P2002`, then update User XP.
+
+### Forbidden
+- Any direct `prisma.xPLog.create()` outside `lib/xp.js`
+- Any XP increment outside `lib/xp.js`
+
+---
+
+## 7) Security Rules
+
+- Never log raw tokens, service keys, or full cookies.
+- Never store raw IPs. If tracked, store `sha256(ip + salt)` only.
+- RLS applies to Supabase client paths; Prisma is trusted server path.  
+  Therefore: server routes MUST enforce auth + ownership checks.
+
+---
+
+## 8) When using AI / code generation
+
+When generating or modifying code, ALWAYS:
+1) Identify the runtime (browser / middleware / api route).
+2) Use the canonical client for that runtime.
+3) Use the canonical auth wrapper for API routes.
+4) If XP is involved: route all XP logic through `lib/xp.js`.
+
+If a proposed change violates any section here: **reject it and rewrite.**
