@@ -1,6 +1,6 @@
 // /components/EnsurePrismaUserOnMount.jsx
 import { useEffect } from "react";
-import { getSupabaseClient } from "../utils/supabase/client"; // <- your existing client
+import { getSupabaseClient } from "../utils/supabase/client";
 
 export default function EnsurePrismaUserOnMount() {
   useEffect(() => {
@@ -22,6 +22,7 @@ export default function EnsurePrismaUserOnMount() {
         // Create/update public.User row and get Prisma id back
         const resp = await fetch("/api/user/ensure", {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             email: u.email,

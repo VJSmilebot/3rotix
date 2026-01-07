@@ -95,7 +95,7 @@ pnpm add @prisma/client@6.19.1 --save-exact
 | `lib/prisma.js` | Global Prisma singleton | Create other Prisma instances |
 | `lib/auth.js` | Server auth verification | Duplicate auth logic in API routes |
 | `lib/auth-middleware.js` | API route auth wrappers | Skip auth in routes |
-| `utils/supabase/client.js` | Browser Supabase client | Import directly from `@supabase/ssr` |
+| `utils/supabase/client.js` | Browser Supabase client | Create ad-hoc Supabase clients elsewhere (or call this on the server) |
 | `utils/supabase/server.js` | Server Supabase client | Create ad-hoc clients in API routes |
 | `middleware.js` | Session proxy (updateSession) | Use as auth enforcer for APIs |
 | `lib/xp.js` | Only place for XP writes | Award XP directly anywhere else |
@@ -207,7 +207,7 @@ export async function middleware(request) {
         getAll() { return request.cookies.getAll() },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => {
-            request.cookies.set({ name, value, ...options })
+            request.cookies.set({ name, value, options })
           })
           response = NextResponse.next({
             request: { headers: request.headers },

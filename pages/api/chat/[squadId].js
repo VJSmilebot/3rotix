@@ -1,38 +1,79 @@
-import { prisma } from '../../../lib/prisma';
-import { getSupabaseUser } from '../../../lib/auth';
-import { createClient } from '@supabase/supabase-js';
+// pages/api/chat/[squadId].js
+import { prisma } from "../../../lib/prisma";
+import { withAuth } from "../../../lib/auth-middleware";
+import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-// helper: keep response shape compatible with BOTH:
-// - clients expecting `result.message`
-// - clients expecting the message object directly
-function jsonMessageResponse(res, message, rewards) {
-  return res.status(200).json({
-    message,
-    rewards,
-    ...message,
-  });
-}
-
-export default async function handler(req, res) {
+async function handler(req, res) {
   const { squadId } = req.query;
 
-  if (!squadId || typeof squadId !== 'string') {
-    return res.status(400).json({ error: 'Missing squadId' });
+  if (!squadId || typeof squadId !== "string") {
+    return res.status(400).json({ error: "Missing squadId" });
   }
 
-  if (req.method === 'GET') {
+  // GET: fetch messages
+  if (req.method === "GET") {
     try {
-      const { includeDeleted } = req.query;
+      const includeDeleted = req.query.includeDeleted === "true";
 
       const messages = await prisma.chatMessage.findMany({
         where: {
           squadId,
-          ...(includeDeleted !== 'true' && { isDeleted: false }),
+          ...(includeDeleted ? {} : { isDeleted: false }),
+        },
+        orderBy: { createdAt: "asc" },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              handle: true,
+              image: true,
+              role: true,
+            },
+          },
+          replyTo: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  handle: true,
+                  image: true,
+                  role: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      return res.status(200).json({ messages });
+    } catch (err) {
+      console.error("GET /api/chat/[squadId] error:", err);
+      return res.status(500).json({ error: "Failed to fetch messages" });
+    }
+  }
+
+  // POST: create message
+  if (req.method === "POST") {
+    try {
+      const { content, mediaUrls, mediaType, replyToId } = req.body || {};
+
+      const text = typeof content === "string" ? content.trim() : "";
+
+      if (!text && (!Array.isArray(mediaUrls) || mediaUrls.length === 0)) {
+        return res.status(400).json({ error: "Message content or media required" });
+      }
+
+      const newMessage = await prisma.chatMessage.create({
+        data: {
+          squadId,
+          userId: req.user.id,
+          content: text || null,
+          mediaUrls: Array.isArray(mediaUrls) ? mediaUrls : null,
+          mediaType: mediaType || null,
+          replyToId: replyToId || null,
+          isDeleted: false,
         },
         include: {
           user: {
@@ -48,101 +89,36 @@ export default async function handler(req, res) {
             include: {
               user: {
                 select: {
+                  id: true,
+                  name: true,
                   handle: true,
+                  image: true,
+                  role: true,
                 },
               },
             },
           },
-          reactions: {
-            select: {
-              emoji: true,
-              userId: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-        take: 100,
-      });
-
-      return res.status(200).json(messages);
-    } catch (error) {
-      console.error('Get messages error:', error);
-      return res.status(500).json({ error: 'Failed to get messages' });
-    }
-  }
-
-  if (req.method === 'POST') {
-    try {
-      const user = await getSupabaseUser(req, res);
-      if (!user) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-
-      const { content, replyToId, mediaUrl, mediaType } = req.body || {};
-
-      if (!content && !mediaUrl) {
-        return res.status(400).json({ error: 'Missing required fields' });
-      }
-
-      const message = await prisma.chatMessage.create({
-        data: {
-          squadId,
-          userId: user.id,
-          content: content || '',
-          mediaUrl: mediaUrl || null,
-          mediaType: mediaType || null,
-          replyToId: replyToId || null,
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              handle: true,
-              image: true,
-              role: true,
-            },
-          },
         },
       });
 
-      // ✅ IMPORTANT: XP tracking must never break chat send.
-      // If Prisma transaction times out, we log it and continue.
-      let rewards = { xp: { total: 0 } };
+      // Optional realtime broadcast (ignore failures)
       try {
-        const { trackChatActivity } = require('../../../utils/chat-tracker');
-
-        const maybeRewards = await trackChatActivity({
-          userId: user.id,
-          messageCount: 1,
-          messageText: content,
-          messageId: message.id,
-          source: 'SQUAD',
+        const channel = supabaseAdmin.channel(`squad:${squadId}`);
+        await channel.send({
+          type: "broadcast",
+          event: "chat_message",
+          payload: { squadId, messageId: newMessage.id },
         });
+      } catch (_) {}
 
-        // if your tracker returns something, keep it
-        if (maybeRewards) rewards = maybeRewards;
-      } catch (err) {
-        console.error('trackChatActivity failed (non-blocking):', err);
-      }
-
-      // Broadcast via Supabase Realtime (best-effort)
-      try {
-        await supabase.channel(`squad-chat-${squadId}`).send({
-          type: 'broadcast',
-          event: 'new-message',
-          payload: { message, rewards },
-        });
-      } catch (err) {
-        console.warn('Supabase broadcast failed (non-blocking):', err);
-      }
-
-      return jsonMessageResponse(res, message, rewards);
-    } catch (error) {
-      console.error('Create message error:', error);
-      return res.status(500).json({ error: 'Failed to send message' });
+      return res.status(201).json({ message: newMessage });
+    } catch (err) {
+      console.error("POST /api/chat/[squadId] error:", err);
+      return res.status(500).json({ error: "Failed to create message" });
     }
   }
 
-  return res.status(405).json({ error: 'Method not allowed' });
+  return res.status(405).json({ error: "Method not allowed" });
 }
+
+export default withAuth(handler);

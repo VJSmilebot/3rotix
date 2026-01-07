@@ -1,23 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
-
-import { useAuth } from './AuthProvider';
-import { supabase } from '../lib/supabaseClient';
-
+import { useAuth } from '../context/AuthContext';
 
 /** Dropdown group — unchanged structure/styles */
 const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, closeMobile }) => {
   const isOpen = activeDropdown === label;
   const ref = useRef(null);
 
-  // close when clicking outside
   useEffect(() => {
     if (!isOpen) return;
     const handleClick = (e) => {
-      // Don't close dropdown if clicking on a link inside the dropdown
       if (ref.current && !ref.current.contains(e.target)) {
         setActiveDropdown(null);
       }
@@ -65,8 +60,7 @@ const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, c
               }`}
               target={it.external ? '_blank' : undefined}
               rel={it.external ? 'noreferrer' : undefined}
-              onClick={(e) => {
-                // IMPORTANT: Use setTimeout to allow navigation to happen first
+              onClick={() => {
                 setTimeout(() => {
                   setActiveDropdown(null);
                   if (closeMobile) closeMobile();
@@ -84,42 +78,57 @@ const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, c
 
 export default function Navbar() {
   const router = useRouter();
-  const { user } = useAuth(); // Get user from AuthContext
+  const { user, supabase, ready } = useAuth();
   const [open, setOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState(null);
   const [userHandle, setUserHandle] = useState(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  // Get user's handle when the user changes
+  // Fetch handle from Supabase (optional; safe-guarded)
   useEffect(() => {
+    let cancelled = false;
+
     async function getUserHandle() {
-      if (!user) {
-        setUserHandle(null);
+      if (!ready || !user || !supabase) {
+        if (!cancelled) setUserHandle(null);
         return;
       }
 
       try {
-        const { data: profileData } = await supabase
+        const { data: profileData, error } = await supabase
           .from('profiles')
           .select('handle')
           .eq('id', user.id)
           .single();
-          
-        if (profileData?.handle) {
-          setUserHandle(profileData.handle);
-        } else {
-          setUserHandle(null);
+
+        if (!cancelled) {
+          if (!error && profileData?.handle) setUserHandle(profileData.handle);
+          else setUserHandle(null);
         }
-      } catch (error) {
-        console.error("Error getting user handle:", error);
-        setUserHandle(null);
+      } catch (err) {
+        if (!cancelled) setUserHandle(null);
       }
     }
-    
+
     getUserHandle();
-  }, [user, supabase]); // Re-run when user changes
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, user, supabase]);
+
+  const accountLabel = useMemo(() => {
+    if (!user) return 'Account';
+    return (
+      userHandle ||
+      user?.user_metadata?.handle ||
+      user?.user_metadata?.name ||
+      (user?.email ? user.email.split('@')[0] : null) ||
+      'Account'
+    );
+  }, [user, userHandle]);
 
   const handleLogout = async () => {
+    if (!supabase) return;
     try {
       setLoggingOut(true);
       await supabase.auth.signOut();
@@ -130,11 +139,12 @@ export default function Navbar() {
     }
   };
 
-  // Your original link groups (unchanged)
+  // Groups (kept, plus your requested routes)
   const platform = [
     { label: 'Overview', href: '/platform' },
-    { label: 'Features', href: '/features' },
-    { label: 'Creator Portal', href: '/creator-portal' }, // Changed from '/creator'
+    { label: 'Explore Creators', href: '/creators' },     // ✅ Explore -> /creators
+    { label: 'Drops', href: '/bundles' },                // ✅ Drops -> /bundles
+    { label: 'Inbox', href: '/messages' },               // ✅ Inbox -> /messages
     { label: 'Live Streaming', href: '/streaming' },
     { label: 'Gamification', href: '/gamification' },
     { label: 'Legal Hub', href: '/legalhub' },
@@ -169,13 +179,11 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-white/10 bg-black/60 backdrop-blur">
       <nav className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between text-white">
-        {/* Left: logo (unchanged) */}
         <Link href="/" className="flex items-center gap-2 font-bold tracking-wide">
           <img alt="3ROTIX" src="/logo.png" className="h-7 w-7" />
           <span>3ROTIX</span>
         </Link>
 
-        {/* Desktop nav (unchanged) */}
         <div className="hidden md:flex items-center gap-2">
           <NavGroup label="Platform" items={platform} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
           <NavGroup label="Learn" items={learn} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
@@ -183,10 +191,9 @@ export default function Navbar() {
           <NavGroup label="Company" items={company} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
         </div>
 
-        {/* Right: Creator Portal + Auth (adds buttons, doesn't change styling elsewhere) */}
         <div className="hidden md:flex items-center gap-3">
           <Link
-            href="/creator-portal" // Changed from '/creator'
+            href="/creator-portal"
             className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-pink-600 hover:bg-pink-500"
           >
             Creator Portal
@@ -195,16 +202,25 @@ export default function Navbar() {
           {user ? (
             <>
               <Link
+                href="/studio"
+                className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700"
+              >
+                Studio
+              </Link>
+
+              <Link
                 href={userHandle ? `/c/${userHandle}` : "/creator"}
                 className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
               >
-                {userHandle ? "My Profile" : "Create Profile"}
+                {accountLabel}
               </Link>
+
               <button
                 onClick={handleLogout}
-                className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+                disabled={loggingOut}
+                className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600 disabled:opacity-60"
               >
-                Logout
+                {loggingOut ? 'Logging out…' : 'Logout'}
               </button>
             </>
           ) : (
@@ -217,7 +233,6 @@ export default function Navbar() {
           )}
         </div>
 
-        {/* Mobile hamburger (unchanged) */}
         <button
           onClick={() => {
             setOpen((v) => !v);
@@ -232,65 +247,46 @@ export default function Navbar() {
         </button>
       </nav>
 
-      {/* Mobile drawer (unchanged layout; adds auth actions at bottom) */}
       {open && (
         <div className="md:hidden border-t border-white/10 bg-black/95 text-white">
           <div className="px-4 py-3 space-y-3">
-            <NavGroup
-              label="Platform"
-              items={platform}
-              activeDropdown={activeDropdown}
-              setActiveDropdown={setActiveDropdown}
-              isMobile
-              closeMobile={() => setOpen(false)}
-            />
-            <NavGroup
-              label="Learn"
-              items={learn}
-              activeDropdown={activeDropdown}
-              setActiveDropdown={setActiveDropdown}
-              isMobile
-              closeMobile={() => setOpen(false)}
-            />
-            <NavGroup
-              label="Community"
-              items={community}
-              activeDropdown={activeDropdown}
-              setActiveDropdown={setActiveDropdown}
-              isMobile
-              closeMobile={() => setOpen(false)}
-            />
-            <NavGroup
-              label="Company"
-              items={company}
-              activeDropdown={activeDropdown}
-              setActiveDropdown={setActiveDropdown}
-              isMobile
-              closeMobile={() => setOpen(false)}
-            />
+            <NavGroup label="Platform" items={platform} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} isMobile closeMobile={() => setOpen(false)} />
+            <NavGroup label="Learn" items={learn} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} isMobile closeMobile={() => setOpen(false)} />
+            <NavGroup label="Community" items={community} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} isMobile closeMobile={() => setOpen(false)} />
+            <NavGroup label="Company" items={company} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} isMobile closeMobile={() => setOpen(false)} />
 
             <Link
-              href="/creator-portal" // Changed from '/creator'
+              href="/creator-portal"
               className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-pink-600 hover:bg-pink-500"
               onClick={() => setOpen(false)}
             >
               Creator Portal
             </Link>
 
-             {user ? (
+            {user ? (
               <>
+                <Link
+                  href="/studio"
+                  className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700"
+                  onClick={() => setOpen(false)}
+                >
+                  Studio
+                </Link>
+
                 <Link
                   href={userHandle ? `/c/${userHandle}` : "/creator"}
                   className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
                   onClick={() => setOpen(false)}
                 >
-                  {userHandle ? "My Profile" : "Create Profile"}
+                  {accountLabel}
                 </Link>
+
                 <button
                   onClick={handleLogout}
-                  className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+                  disabled={loggingOut}
+                  className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600 disabled:opacity-60"
                 >
-                  Logout
+                  {loggingOut ? 'Logging out…' : 'Logout'}
                 </button>
               </>
             ) : (

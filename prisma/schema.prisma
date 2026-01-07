@@ -53,7 +53,7 @@ model User {
   notifications                           Notification[]
   recordings                              Recording[]
   registeredWorks                         RegisteredWork[]  @relation("UserRegisteredWorks")
-  streams                                 Stream[]
+  streams                                 Stream[] 
   Tip_Tip_fromuseridToUser                Tip[]             @relation("Tip_fromuseridToUser")
   Tip_Tip_touseridToUser                  Tip[]             @relation("Tip_touseridToUser")
   Transaction_Transaction_creatoridToUser Transaction[]     @relation("Transaction_creatoridToUser")

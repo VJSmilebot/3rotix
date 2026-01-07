@@ -1,9 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
 export default function ChatControls({ playbackId }) {
+  const { supabase, ready } = useAuth() || {};
+  if (!ready || !supabase) return null;
+  
   const [enabled, setEnabled] = useState(false);
   const [mode, setMode] = useState('public');      // public | squad | squadvip
   const [slow, setSlow] = useState(0);

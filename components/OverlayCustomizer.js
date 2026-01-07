@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
 export default function OverlayCustomizer({
   open,
@@ -9,6 +9,8 @@ export default function OverlayCustomizer({
   config, setConfig,
   canToggleWatermark = false,  // entitlement (false = locked)
 }) {
+  const { supabase, ready } = useAuth() || {};
+  if (!ready || !supabase) return null;
   const [uploading, setUploading] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const channelRef = useRef(null);

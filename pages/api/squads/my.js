@@ -1,15 +1,14 @@
 import { prisma } from "../../../lib/prisma";
+import { withAuth } from "../../../lib/auth-middleware.js";
 
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    const userId = typeof req.query.userId === "string" ? req.query.userId : "";
-    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const userId = req.user.id;
 
-    // ✅ Your schema: model SquadMember { squadId, userId, ... }
     const rows = await prisma.squadMember.findMany({
       where: { userId },
       select: { squadId: true },
@@ -21,13 +20,33 @@ export default async function handler(req, res) {
 
     const squads = await prisma.squad.findMany({
       where: { id: { in: squadIds } },
-      // optional sort
       orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        bio: true,
+        image: true,
+        banner: true,
+        level: true,
+        totalXp: true,
+        memberCount: true,
+        type: true,
+        chatEnabled: true,
+        slowMode: true,
+        mediaEnabled: true,
+        website: true,
+        twitter: true,
+        instagram: true,
+        discord: true,
+        createdAt: true,
+      },
     });
 
     return res.status(200).json(squads);
   } catch (error) {
     console.error("API /squads/my error:", error);
-    return res.status(500).json({ error: error.message || "Server error" });
+    return res.status(500).json({ error: error?.message || "Server error" });
   }
-}
+});

@@ -74,7 +74,7 @@ export default function Home() {
           >
             View Roadmap
           </button>
-          <a href="/community" className="hover:text-pink-400">
+          <a href="https://t.me/disruptingexploitation" className="hover:text-pink-400">
             Explore Community
           </a>
         </div>

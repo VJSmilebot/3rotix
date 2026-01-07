@@ -1,41 +1,72 @@
-// components/AuthProvider.js
-'use client';
-
-import { createContext, useContext, useEffect, useState } from 'react';
-import { getSupabaseClient } from '../utils/supabase/client';
-
-const AuthCtx = createContext({ user: null, loading: true, signOut: async () => {} });
-export const useAuth = () => useContext(AuthCtx);
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { useRouter } from "next/router";
+import AuthContext from "../context/AuthContext";
+import { getSupabaseClient } from "../utils/supabase/client";
 
 export default function AuthProvider({ children }) {
+  const router = useRouter();
+
+  const [supabase, setSupabase] = useState(null);
+  const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const supabase = getSupabaseClient();
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    let mounted = true;
+    // IMPORTANT: browser-only creation
+    const sb = getSupabaseClient();
+    setSupabase(sb);
 
-    supabase.auth
-      .getSession()
-      .then(({ data }) => { if (mounted) setUser(data.session?.user ?? null); })
-      .catch(() => { if (mounted) setUser(null); })
-      .finally(() => { if (mounted) setLoading(false); });
+    let alive = true;
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setUser(session?.user ?? null);
+    (async () => {
+      const { data, error } = await sb.auth.getSession();
+      if (!alive) return;
+
+      if (error) {
+        console.warn("AuthProvider.getSession error:", error.message);
+      }
+
+      setSession(data?.session ?? null);
+      setUser(data?.session?.user ?? null);
+      setReady(true);
+    })();
+
+    const { data: sub } = sb.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession ?? null);
+      setUser(nextSession?.user ?? null);
     });
 
     return () => {
-      mounted = false;
+      alive = false;
       sub?.subscription?.unsubscribe?.();
     };
-  }, [supabase]);
+  }, []);
 
-  const signOut = async () => { await supabase.auth.signOut(); };
+  const signOut = useCallback(async () => {
+    try {
+      if (!supabase) return;
+      await supabase.auth.signOut();
+      router.push("/");
+    } catch (e) {
+      console.error("signOut failed:", e);
+    }
+  }, [supabase, router]);
 
-  return (
-    <AuthCtx.Provider value={{ user, loading, signOut }}>
-      {children}
-    </AuthCtx.Provider>
+  const accessToken = session?.access_token ?? null;
+
+  const value = useMemo(
+    () => ({
+      supabase,
+      session,
+      user,
+      accessToken,
+      ready,
+      isAuthed: !!user,
+      signOut,
+    }),
+    [supabase, session, user, accessToken, ready, signOut]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
+  
