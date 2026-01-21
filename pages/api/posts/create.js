@@ -1,38 +1,55 @@
-import { createClient } from '@supabase/supabase-js';
-import { prisma } from '../../../lib/prisma';
+// pages/api/posts/create.js
+import { prisma } from "../../../lib/prisma";
+import { withAuth } from "../../../lib/auth-middleware";
+import crypto from "crypto";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-/**
- * Create a new post
- */
-export default async function handler(req, res) {
-  // Get auth token
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
+export default withAuth(async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
-  // Verify user
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+  const userId = req.user.id;
+  const { content, mediaUrls, tierId } = req.body || {};
 
-  if (authError || !user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!content || typeof content !== "string" || !content.trim()) {
+    return res.status(400).json({ ok: false, error: "content required" });
   }
 
   try {
-    // TODO: Implement logic here
-    return res.status(200).json({ 
-      message: 'TODO: Implement this endpoint',
-      user: user.id 
+    // NOTE: Your Prisma schema has SubscriberPost (not Post),
+    // so Prisma Client is prisma.subscriberPost
+    const post = await prisma.subscriberPost.create({
+      data: {
+        id: crypto.randomUUID(),
+        creatorId: userId,
+        tierId: tierId || null,
+        content: content.trim(),
+        mediaUrls: Array.isArray(mediaUrls) ? mediaUrls : [],
+        likesCount: 0,
+        commentsCount: 0,
+        updatedAt: new Date(),
+      },
+      select: {
+        id: true,
+        creatorId: true,
+        tierId: true,
+        content: true,
+        mediaUrls: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return res.status(200).json({
+      ok: true,
+      data: {
+        message: "Post created",
+        post,
+        postId: post.id,
+      },
     });
   } catch (err) {
-    console.error('Error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error("Create post error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to create post" });
   }
-}
+});

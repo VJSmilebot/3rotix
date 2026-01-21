@@ -76,56 +76,94 @@ const NavGroup = ({ label, items, activeDropdown, setActiveDropdown, isMobile, c
   );
 };
 
+function isSafeFromPath(p) {
+  return typeof p === 'string' && p.startsWith('/') && !p.startsWith('//');
+}
+
 export default function Navbar() {
   const router = useRouter();
   const { user, supabase, ready } = useAuth();
+
   const [open, setOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState(null);
-  const [userHandle, setUserHandle] = useState(null);
+
+  // Canonical Prisma user (from /api/user/ensure)
+  const [me, setMe] = useState(null);
+  const [loadingMe, setLoadingMe] = useState(false);
+
+  // Account dropdown (desktop)
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef(null);
+
   const [loggingOut, setLoggingOut] = useState(false);
 
-  // Fetch handle from Supabase (optional; safe-guarded)
+  // Close account dropdown on outside click
+  useEffect(() => {
+    if (!accountOpen) return;
+    const onClick = (e) => {
+      if (accountRef.current && !accountRef.current.contains(e.target)) {
+        setAccountOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('touchstart', onClick);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('touchstart', onClick);
+    };
+  }, [accountOpen]);
+
+  // Fetch canonical Prisma user (handle/avatar/role) via ensure
   useEffect(() => {
     let cancelled = false;
 
-    async function getUserHandle() {
-      if (!ready || !user || !supabase) {
-        if (!cancelled) setUserHandle(null);
+    async function loadMe() {
+      if (!ready || !user) {
+        if (!cancelled) setMe(null);
         return;
       }
-
       try {
-        const { data: profileData, error } = await supabase
-          .from('profiles')
-          .select('handle')
-          .eq('id', user.id)
-          .single();
+        if (!cancelled) setLoadingMe(true);
+
+        const res = await fetch('/api/user/ensure', { method: 'POST' });
+        const json = await res.json().catch(() => ({}));
 
         if (!cancelled) {
-          if (!error && profileData?.handle) setUserHandle(profileData.handle);
-          else setUserHandle(null);
+          if (res.ok && json?.user) setMe(json.user);
+          else setMe(null);
         }
-      } catch (err) {
-        if (!cancelled) setUserHandle(null);
+      } catch (e) {
+        if (!cancelled) setMe(null);
+      } finally {
+        if (!cancelled) setLoadingMe(false);
       }
     }
 
-    getUserHandle();
+    loadMe();
     return () => {
       cancelled = true;
     };
-  }, [ready, user, supabase]);
+  }, [ready, user]);
+
+  const from = useMemo(() => {
+    const p = router?.asPath;
+    return isSafeFromPath(p) ? p : '/homebase';
+  }, [router?.asPath]);
 
   const accountLabel = useMemo(() => {
     if (!user) return 'Account';
+    // Prefer Prisma handle/name
     return (
-      userHandle ||
+      me?.handle ||
+      me?.name ||
       user?.user_metadata?.handle ||
       user?.user_metadata?.name ||
       (user?.email ? user.email.split('@')[0] : null) ||
       'Account'
     );
-  }, [user, userHandle]);
+  }, [user, me]);
+
+  const accountAvatar = me?.image || null;
 
   const handleLogout = async () => {
     if (!supabase) return;
@@ -139,12 +177,12 @@ export default function Navbar() {
     }
   };
 
-  // Groups (kept, plus your requested routes)
+  // Groups (unchanged)
   const platform = [
     { label: 'Overview', href: '/platform' },
-    { label: 'Explore Creators', href: '/creators' },     // ✅ Explore -> /creators
-    { label: 'Drops', href: '/bundles' },                // ✅ Drops -> /bundles
-    { label: 'Inbox', href: '/messages' },               // ✅ Inbox -> /messages
+    { label: 'Explore Creators', href: '/creators' },
+    { label: 'Drops', href: '/bundles' },
+    { label: 'Inbox', href: '/messages' },
     { label: 'Live Streaming', href: '/streaming' },
     { label: 'Gamification', href: '/gamification' },
     { label: 'Legal Hub', href: '/legalhub' },
@@ -176,6 +214,9 @@ export default function Navbar() {
     { label: 'Performer Release', href: '/legal/release' },
   ];
 
+  const myHandle = me?.handle || null;
+  const myProfileHref = myHandle ? `/c/${myHandle}` : '/homebase';
+
   return (
     <header className="sticky top-0 z-50 border-b border-white/10 bg-black/60 backdrop-blur">
       <nav className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between text-white">
@@ -191,48 +232,95 @@ export default function Navbar() {
           <NavGroup label="Company" items={company} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
         </div>
 
+        {/* Desktop right side: one obvious Account button */}
         <div className="hidden md:flex items-center gap-3">
-          <Link
-            href="/creator-portal"
-            className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-pink-600 hover:bg-pink-500"
-          >
-            Creator Portal
-          </Link>
-
-          {user ? (
-            <>
-              <Link
-                href="/studio"
-                className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700"
-              >
-                Studio
-              </Link>
-
-              <Link
-                href={userHandle ? `/c/${userHandle}` : "/creator"}
-                className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
-              >
-                {accountLabel}
-              </Link>
-
-              <button
-                onClick={handleLogout}
-                disabled={loggingOut}
-                className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600 disabled:opacity-60"
-              >
-                {loggingOut ? 'Logging out…' : 'Logout'}
-              </button>
-            </>
-          ) : (
+          {!user ? (
             <Link
               href="/login"
               className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
             >
               Login
             </Link>
+          ) : (
+            <div className="relative" ref={accountRef}>
+              <button
+                onClick={() => setAccountOpen((v) => !v)}
+                className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700 border border-white/10"
+                aria-label="Open account menu"
+              >
+                {accountAvatar ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={accountAvatar}
+                    alt=""
+                    className="h-7 w-7 rounded-full object-cover border border-white/10"
+                  />
+                ) : (
+                  <div className="h-7 w-7 rounded-full bg-white/10 border border-white/10" />
+                )}
+
+                <span className="max-w-[140px] truncate">
+                  {loadingMe ? 'Loading…' : accountLabel}
+                </span>
+
+                {/* 3 lines */}
+                <span className="ml-1 inline-flex flex-col justify-center gap-1">
+                  <span className="block h-0.5 w-4 bg-white/80" />
+                  <span className="block h-0.5 w-4 bg-white/80" />
+                  <span className="block h-0.5 w-4 bg-white/80" />
+                </span>
+              </button>
+
+              {accountOpen && (
+                <div className="absolute right-0 mt-2 w-56 rounded-lg border border-white/10 bg-neutral-900/95 backdrop-blur shadow-lg p-2 z-50">
+                  <Link
+                    href={myProfileHref}
+                    className="block px-3 py-2 rounded-md text-sm hover:bg-white/5"
+                    onClick={() => setAccountOpen(false)}
+                  >
+                    My Profile
+                  </Link>
+
+                  <Link
+                    href={`/creator?from=${encodeURIComponent(from)}`}
+                    className="block px-3 py-2 rounded-md text-sm hover:bg-white/5"
+                    onClick={() => setAccountOpen(false)}
+                  >
+                    Edit Profile
+                  </Link>
+
+                  <Link
+                    href={`/studio?from=${encodeURIComponent(from)}`}
+                    className="block px-3 py-2 rounded-md text-sm hover:bg-white/5"
+                    onClick={() => setAccountOpen(false)}
+                  >
+                    Studio
+                  </Link>
+
+                  <Link
+                    href={`/settings?from=${encodeURIComponent(from)}`}
+                    className="block px-3 py-2 rounded-md text-sm hover:bg-white/5"
+                    onClick={() => setAccountOpen(false)}
+                  >
+                    Settings
+                  </Link>
+
+                  <div className="my-2 h-px bg-white/10" />
+
+                  <button
+                    onClick={handleLogout}
+                    disabled={loggingOut}
+                    className="w-full text-left px-3 py-2 rounded-md text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-60"
+                  >
+                    {loggingOut ? 'Logging out…' : 'Logout'}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
+        {/* Mobile hamburger (site sections). Account actions are shown inside when open */}
         <button
           onClick={() => {
             setOpen((v) => !v);
@@ -255,41 +343,8 @@ export default function Navbar() {
             <NavGroup label="Community" items={community} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} isMobile closeMobile={() => setOpen(false)} />
             <NavGroup label="Company" items={company} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} isMobile closeMobile={() => setOpen(false)} />
 
-            <Link
-              href="/creator-portal"
-              className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-pink-600 hover:bg-pink-500"
-              onClick={() => setOpen(false)}
-            >
-              Creator Portal
-            </Link>
-
-            {user ? (
-              <>
-                <Link
-                  href="/studio"
-                  className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Studio
-                </Link>
-
-                <Link
-                  href={userHandle ? `/c/${userHandle}` : "/creator"}
-                  className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
-                  onClick={() => setOpen(false)}
-                >
-                  {accountLabel}
-                </Link>
-
-                <button
-                  onClick={handleLogout}
-                  disabled={loggingOut}
-                  className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600 disabled:opacity-60"
-                >
-                  {loggingOut ? 'Logging out…' : 'Logout'}
-                </button>
-              </>
-            ) : (
+            {/* Mobile account section */}
+            {!user ? (
               <Link
                 href="/login"
                 className="mt-2 inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
@@ -297,6 +352,70 @@ export default function Navbar() {
               >
                 Login
               </Link>
+            ) : (
+              <div className="mt-2 space-y-2">
+                <div className="rounded-xl border border-white/10 bg-neutral-900/60 p-3 flex items-center gap-3">
+                  {accountAvatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={accountAvatar}
+                      alt=""
+                      className="h-9 w-9 rounded-full object-cover border border-white/10"
+                    />
+                  ) : (
+                    <div className="h-9 w-9 rounded-full bg-white/10 border border-white/10" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="font-semibold truncate">
+                      {loadingMe ? 'Loading…' : accountLabel}
+                    </div>
+                    <div className="text-xs text-white/60 truncate">{user.email}</div>
+                  </div>
+                </div>
+
+                <Link
+                  href={myProfileHref}
+                  className="inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700"
+                  onClick={() => setOpen(false)}
+                >
+                  My Profile
+                </Link>
+
+                <Link
+                  href={`/creator?from=${encodeURIComponent(from)}`}
+                  className="inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700"
+                  onClick={() => setOpen(false)}
+                >
+                  Edit Profile
+                </Link>
+
+                <Link
+                  href={`/studio?from=${encodeURIComponent(from)}`}
+                  className="inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700"
+                  onClick={() => setOpen(false)}
+                >
+                  Studio
+                </Link>
+
+                <Link
+                  href={`/settings?from=${encodeURIComponent(from)}`}
+                  className="inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600"
+                  onClick={() => setOpen(false)}
+                >
+                  Settings
+                </Link>
+
+                <button
+                  onClick={() => {
+                    setOpen(false);
+                    handleLogout();
+                  }}
+                  disabled={loggingOut}
+                  className="inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-semibold bg-gray-700 hover:bg-gray-600 disabled:opacity-60"
+                >
+                  {loggingOut ? 'Logging out…' : 'Logout'}
+                </button>
+              </div>
             )}
           </div>
         </div>

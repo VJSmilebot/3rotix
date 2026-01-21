@@ -1,14 +1,15 @@
 import { prisma } from '../../../../lib/prisma';
+import { withAuth } from '../../../../lib/auth-middleware';
 
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
   const { creatorId } = req.query;
 
   if (!creatorId) {
-    return res.status(400).json({ error: 'Creator ID required' });
+    return res.status(400).json({ ok: false, error: 'Creator ID required' });
   }
 
   try {
@@ -28,9 +29,9 @@ export default async function handler(req, res) {
       orderBy: { createdAt: 'desc' },
     });
 
-    return res.status(200).json(bundles);
+    return res.status(200).json({ ok: true, data: bundles });
   } catch (err) {
     console.error('Error fetching bundles:', err);
-    return res.status(500).json({ error: 'Failed to fetch bundles' });
+    return res.status(500).json({ ok: false, error: 'Failed to fetch bundles' });
   }
-}
+});

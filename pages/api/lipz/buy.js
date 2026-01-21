@@ -1,38 +1,37 @@
-import { createClient } from '@supabase/supabase-js';
-import { prisma } from '../../../lib/prisma';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+import { prisma } from "../../../lib/prisma";
+import { withAuth } from "../../../lib/auth-middleware";
 
 /**
- * Buy Lipz with Stripe
+ * Buy Lipz (payment rail TBD)
+ * Rule: 1 Lipz = 1 cent (internal accounting)
  */
-export default async function handler(req, res) {
-  // Get auth token
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
+export default withAuth(async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
-  // Verify user
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+  const userId = req.user.id;
+  const { amount } = req.body || {};
 
-  if (authError || !user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  const lipzAmount = Number(amount);
+  if (!Number.isInteger(lipzAmount) || lipzAmount <= 0) {
+    return res.status(400).json({ ok: false, error: "Valid amount required" });
   }
 
   try {
-    // TODO: Implement logic here
-    return res.status(200).json({ 
-      message: 'TODO: Implement this endpoint',
-      user: user.id 
+    // Placeholder: no external processor yet.
+    // When Stripe is added: charge amountCents = lipzAmount (NOT lipzAmount * 100)
+    return res.status(200).json({
+      ok: true,
+      data: {
+        message: "TODO: Implement Stripe integration",
+        userId,
+        lipzAmount,
+        amountCents: lipzAmount, // 1 Lipz = 1 cent
+      },
     });
   } catch (err) {
-    console.error('Error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error("Error:", err);
+    return res.status(500).json({ ok: false, error: "Internal server error" });
   }
-}
+});

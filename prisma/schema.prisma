@@ -3,9 +3,10 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  schemas  = ["auth", "public"]
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  schemas   = ["auth", "public"]
 }
 
 model Achievement {
@@ -26,41 +27,48 @@ model Achievement {
 }
 
 model User {
-  id                                      String            @id
-  email                                   String            @unique
-  name                                    String?
-  handle                                  String?           @unique
-  image                                   String?
-  role                                    Role              @default(FAN)
-  isSuperAdmin                            Boolean           @default(false)
-  totalXp                                 Int               @default(0)
-  rank                                    Rank              @default(ROOKIE)
-  level                                   Int               @default(1)
-  currentLevelXp                          Int               @default(0)
-  createdAt                               DateTime          @default(now())
-  updatedAt                               DateTime          @updatedAt
-  bio                                     String?
-  instagram                               String?
-  twitter                                 String?
-  website                                 String?
-  isPublic                                Boolean           @default(true)
-  chatMessages                            ChatMessage[]
-  clips                                   Clip[]
-  content                                 Content[]
-  follows                                 Follow[]          @relation("UserFollows")
-  followers                               Follow[]          @relation("UserFollowers")
-  messageReactions                        MessageReaction[]
-  notifications                           Notification[]
-  recordings                              Recording[]
-  registeredWorks                         RegisteredWork[]  @relation("UserRegisteredWorks")
-  streams                                 Stream[] 
-  Tip_Tip_fromuseridToUser                Tip[]             @relation("Tip_fromuseridToUser")
-  Tip_Tip_touseridToUser                  Tip[]             @relation("Tip_touseridToUser")
-  Transaction_Transaction_creatoridToUser Transaction[]     @relation("Transaction_creatoridToUser")
-  Transaction_Transaction_useridToUser    Transaction[]     @relation("Transaction_useridToUser")
-  onboardingSteps                         UserOnboardingStep[]
-  onboardingSignals                       OnboardingSignal[]
-  Wallet                                  Wallet?
+  id                                                    String               @id
+  email                                                 String               @unique
+  name                                                  String?
+  handle                                                String?              @unique
+  image                                                 String?
+  role                                                  Role                 @default(FAN)
+  totalXp                                               Int                  @default(0)
+  rank                                                  Rank                 @default(ROOKIE)
+  level                                                 Int                  @default(1)
+  currentLevelXp                                        Int                  @default(0)
+  createdAt                                             DateTime             @default(now())
+  updatedAt                                             DateTime             @updatedAt
+  bio                                                   String?
+  instagram                                             String?
+  twitter                                               String?
+  website                                               String?
+  isPublic                                              Boolean              @default(true)
+  isSuperAdmin                                          Boolean              @default(false)
+  supabaseId                                            String?              @unique @db.Uuid
+  chatMessages                                          ChatMessage[]
+  clips                                                 Clip[]
+  CollabFile                                            CollabFile[]
+  CollabProposal_CollabProposal_created_by_idToUser     CollabProposal[]     @relation("CollabProposal_created_by_idToUser")
+  CollabProposal_CollabProposal_recipient_user_idToUser CollabProposal[]     @relation("CollabProposal_recipient_user_idToUser")
+  CollabTermComment                                     CollabTermComment[]
+  CollabTermVersion                                     CollabTermVersion[]
+  content                                               Content[]
+  follows                                               Follow[]             @relation("UserFollows")
+  followers                                             Follow[]             @relation("UserFollowers")
+  Image                                                 Image[]
+  messageReactions                                      MessageReaction[]
+  notifications                                         Notification[]
+  onboardingSignals                                     OnboardingSignal[]
+  recordings                                            Recording[]
+  registeredWorks                                       RegisteredWork[]     @relation("UserRegisteredWorks")
+  streams                                               Stream[]
+  Tip_Tip_fromuseridToUser                              Tip[]                @relation("Tip_fromuseridToUser")
+  Tip_Tip_touseridToUser                                Tip[]                @relation("Tip_touseridToUser")
+  Transaction_Transaction_creatoridToUser               Transaction[]        @relation("Transaction_creatoridToUser")
+  Transaction_Transaction_useridToUser                  Transaction[]        @relation("Transaction_useridToUser")
+  onboardingSteps                                       UserOnboardingStep[]
+  Wallet                                                Wallet?
 
   @@index([handle])
   @@index([rank])
@@ -93,7 +101,6 @@ model Video {
 
 model Image {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId       String    @db.Uuid
   title        String?
   description  String?
   url          String
@@ -102,7 +109,8 @@ model Image {
   thumbnailUrl String?
   createdAt    DateTime? @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime? @default(now()) @updatedAt @db.Timestamptz(6)
-  users        users     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  userId       String?
+  users        User?     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([userId], map: "idx_image_userid")
   @@schema("public")
@@ -483,29 +491,33 @@ model ContentFingerprint {
 }
 
 model Wallet {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId        String   @unique @map("userid")
-  lipzBalance   Int      @default(0) @map("lipzbalance")
-  earningsCents Int      @default(0) @map("earningscents")
-  currency      String   @default("USD") @db.VarChar(10)
-  createdAt     DateTime @default(now()) @db.Timestamptz(6) @map("createdat")
-  updatedAt     DateTime @default(now()) @db.Timestamptz(6) @map("updatedat")
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                String   @unique @map("userid")
+  lipzBalance           Int      @default(0) @map("lipzbalance")
+  earningsCents         Int      @default(0) @map("earningscents")
+  currency              String   @default("USD") @db.VarChar(10)
+  createdAt             DateTime @default(now()) @map("createdat") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @map("updatedat") @db.Timestamptz(6)
+  autoTopUpEnabled      Boolean  @default(false)
+  autoTopUpThreshold    Int      @default(100)
+  autoTopUpAmount       Int      @default(500)
+  stripeCustomerId      String?
+  stripePaymentMethodId String?
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
+  @@index([autoTopUpEnabled])
   @@schema("public")
 }
 
 model Tip {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  fromUserId  String   @map("fromuserid")
-  toUserId    String   @map("touserid")
-  lipzAmount  Int      @map("lipzamount")
-  message     String?  @db.VarChar(500)
-  createdAt   DateTime @default(now()) @db.Timestamptz(6) @map("createdat")
-
-  fromUser    User     @relation("Tip_fromuseridToUser", fields: [fromUserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  toUser      User     @relation("Tip_touseridToUser", fields: [toUserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromUserId String   @map("fromuserid")
+  toUserId   String   @map("touserid")
+  lipzAmount Int      @map("lipzamount")
+  message    String?  @db.VarChar(500)
+  createdAt  DateTime @default(now()) @map("createdat") @db.Timestamptz(6)
+  fromUser   User     @relation("Tip_fromuseridToUser", fields: [fromUserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  toUser     User     @relation("Tip_touseridToUser", fields: [toUserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([createdAt(sort: Desc)], map: "idx_tip_created")
   @@index([fromUserId], map: "idx_tip_from_user")
@@ -523,9 +535,8 @@ model Transaction {
   platformFeeCents Int             @default(0) @map("platformfeecents")
   creatorNetCents  Int             @default(0) @map("creatornetcents")
   metadata         Json?
-  createdAt        DateTime        @default(now()) @db.Timestamptz(6) @map("createdat")
-
-  creator          User?           @relation("Transaction_creatoridToUser", fields: [creatorId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  createdAt        DateTime        @default(now()) @map("createdat") @db.Timestamptz(6)
+  creator          User?           @relation("Transaction_creatoridToUser", fields: [creatorId], references: [id], onUpdate: NoAction)
   user             User            @relation("Transaction_useridToUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([createdAt(sort: Desc)], map: "idx_tx_created")
@@ -535,17 +546,16 @@ model Transaction {
 }
 
 model Bundle {
-  id          String   @id @default(uuid())
+  id          String           @id @default(uuid())
   creatorId   String
   title       String
   description String?
   coverImage  String?
-  price       Int      // Lipz price
-  type        BundleType @default(PHOTOSET)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
+  price       Int
+  type        BundleType       @default(PHOTOSET)
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
   items       BundleItem[]
   purchases   BundlePurchase[]
 
@@ -558,11 +568,10 @@ model Bundle {
 model BundleItem {
   id        String   @id @default(uuid())
   bundleId  String
-  mediaType String   // VIDEO, IMAGE, AUDIO
-  mediaId   String   // References Video, Image, or Audio
+  mediaType String
+  mediaId   String
   order     Int      @default(0)
   createdAt DateTime @default(now())
-
   bundle    Bundle   @relation(fields: [bundleId], references: [id], onDelete: Cascade)
 
   @@index([bundleId])
@@ -575,7 +584,6 @@ model BundlePurchase {
   userId      String
   lipzPaid    Int
   purchasedAt DateTime @default(now())
-
   bundle      Bundle   @relation(fields: [bundleId], references: [id])
 
   @@unique([bundleId, userId])
@@ -584,14 +592,6 @@ model BundlePurchase {
   @@schema("public")
 }
 
-enum BundleType {
-  PHOTOSET
-  VIDEO_PACK
-  MIXED
- 
-  @@schema("public")
-}
-  
 model PlatformSettings {
   id                       String   @id @default("default")
   globalplatformcutpercent Int      @default(10)
@@ -952,11 +952,7 @@ model sso_providers {
   @@schema("auth")
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
-
 model users {
   instance_id                 String?                @db.Uuid
   id                          String                 @id @db.Uuid
@@ -999,7 +995,6 @@ model users {
   oauth_consents              oauth_consents[]
   one_time_tokens             one_time_tokens[]
   sessions                    sessions[]
-  Image                       Image[]
 
   @@index([instance_id])
   @@index([is_anonymous])
@@ -1027,18 +1022,22 @@ model Audio {
 }
 
 model Conversation {
-  id              String   @id @default(uuid())
-  participant1Id  String
-  participant2Id  String
-  isUnlocked      Boolean  @default(false)
-  unlockPrice     Int      @default(0)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  messages        Message[]
+  id                 String    @id @default(uuid())
+  participant1Id     String
+  participant2Id     String
+  lastMessageAt      DateTime  @default(now())
+  lastMessagePreview String?
+  isUnlocked         Boolean   @default(false)
+  unlockPrice        Int?
+  unlockedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  messages           Message[]
 
   @@unique([participant1Id, participant2Id])
   @@index([participant1Id])
   @@index([participant2Id])
+  @@index([lastMessageAt(sort: Desc)])
   @@schema("public")
 }
 
@@ -1048,135 +1047,534 @@ model Message {
   senderId       String
   receiverId     String
   content        String?
-  mediaUrls      Json         @default("[]")
+  mediaUrls      Json?        @default("[]")
   mediaType      String?
-  reactions      Json         @default("{}")
+  isPaid         Boolean      @default(false)
+  isRead         Boolean      @default(false)
+  readAt         DateTime?
+  deletedFor     Json?        @default("[]")
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  reactions      Json?        @default("{}")
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId])
   @@index([senderId])
-  @@schema("public")
-}
-
-// ================================
-// CREATOR ONBOARDING (AUTO-CHECKLIST)
-// ================================
-
-model OnboardingConfig {
-  id                 String   @id @default("default")
-  activeVersion      Int      @default(1)
-  locked             Boolean  @default(false) // if true, only SUPERADMIN can change config/steps
-  updatedByUserId    String?
-  updatedAt          DateTime @default(now()) @updatedAt
-
+  @@index([createdAt(sort: Desc)])
+  @@index([reactions], type: Gin)
+  @@index([receiverId])
   @@schema("public")
 }
 
 model OnboardingStep {
-  id               String   @id @default(dbgenerated("(gen_random_uuid())::text"))
-  version          Int      @default(1)
-  sortOrder        Int      @default(0)
-  isActive         Boolean  @default(true)
+  id              String                 @id @default(dbgenerated("(gen_random_uuid())::text"))
+  version         Int                    @default(1)
+  sortOrder       Int                    @default(0)
+  isActive        Boolean                @default(true)
+  key             String                 @db.VarChar(120)
+  title           String                 @db.VarChar(200)
+  description     String?
+  category        String                 @default("core") @db.VarChar(50)
+  isRequired      Boolean                @default(true)
+  allowSelfAttest Boolean                @default(true)
+  requiresReview  Boolean                @default(false)
+  jurisdictions   Json?
+  evidenceType    OnboardingEvidenceType @default(NONE)
+  evidenceHint    String?
+  autoRule        Json?
+  xpReward        Int                    @default(0)
+  badgeKey        String?
+  createdAt       DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  userSteps       UserOnboardingStep[]
 
-  // Identity
-  key              String   @db.VarChar(120) // stable key for code + signals (ex: "AGE_VERIFY", "PAYOUT_CONNECT")
-  title            String   @db.VarChar(200)
-  description      String?
-  category         String   @default("core") @db.VarChar(50) // ex: core, safety, payout, compliance, profile
-
-  // Logic
-  isRequired       Boolean  @default(true)
-  allowSelfAttest  Boolean  @default(true)  // user can mark complete (may require evidence)
-  requiresReview   Boolean  @default(false) // if true, completion stays NEEDS_REVIEW until admin approves
-
-  // Compliance targeting (so you can adapt by law/jurisdiction)
-  jurisdictions    Json?    // example: { "countries":["US"], "states":["CA","FL"], "tags":["2257"] }
-  evidenceType     OnboardingEvidenceType @default(NONE)
-  evidenceHint     String?  // short helper text for upload/what counts as proof
-
-  // Auto-completion rules (flexible JSON)
-  // examples:
-  // { "signalKey":"AGE_VERIFIED", "equals":true }
-  // { "userField":"handle", "exists":true }
-  // { "all":[ {..},{..} ] } / { "any":[ {..},{..} ] }
-  autoRule         Json?
-
-  // Optional rewards later (we’ll wire XP/badges AFTER tool is stable)
-  xpReward         Int      @default(0)
-  badgeKey         String?
-
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now()) @updatedAt
-
-  userSteps        UserOnboardingStep[]
-
-  @@unique([version, key])
-  @@index([isActive, version, sortOrder])
+  @@unique([version, key], map: "OnboardingStep_version_key_unique")
   @@schema("public")
 }
 
 model UserOnboardingStep {
-  id               String   @id @default(dbgenerated("(gen_random_uuid())::text"))
-  userId           String
-  stepId           String
+  id           String                @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId       String
+  stepId       String
+  status       OnboardingStepStatus  @default(PENDING)
+  selfAttested Boolean               @default(false)
+  autoDetected Boolean               @default(false)
+  completedAt  DateTime?             @db.Timestamptz(6)
+  completedBy  OnboardingCompletedBy @default(USER)
+  evidenceUrl  String?
+  evidenceJson Json?
+  notes        String?
+  createdAt    DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
+  step         OnboardingStep        @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "UserOnboardingStep_step_fk")
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "UserOnboardingStep_user_fk")
 
-  status           OnboardingStepStatus @default(PENDING)
-
-  // “both match = more probable”
-  selfAttested     Boolean  @default(false)
-  autoDetected     Boolean  @default(false)
-
-  completedAt      DateTime?
-  completedBy      OnboardingCompletedBy @default(USER)
-
-  // Evidence (optional)
-  evidenceUrl      String?  // if you store in Supabase Storage
-  evidenceJson     Json?    // or store structured proof data
-  notes            String?
-
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now()) @updatedAt
-
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  step             OnboardingStep @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@unique([userId, stepId])
+  @@unique([userId, stepId], map: "UserOnboardingStep_user_step_unique")
   @@index([userId, status])
   @@schema("public")
 }
 
 model OnboardingSignal {
-  id               String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id               String    @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId           String
-  key              String   @db.VarChar(120) // ex: "AGE_VERIFIED", "PAYOUT_CONNECTED", "DOC_2257_SIGNED"
+  key              String    @db.VarChar(120)
   valueJson        Json?
-  isTrue           Boolean  @default(false)
-
-  // audit-ish
-  source           String?  @db.VarChar(80) // "keysako", "manual_admin", "payment_partner", "system"
+  isTrue           Boolean   @default(false)
+  source           String?   @db.VarChar(80)
   verifiedByUserId String?
-  verifiedAt       DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now()) @updatedAt
+  verifiedAt       DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "OnboardingSignal_user_fk")
 
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@unique([userId, key])
+  @@unique([userId, key], map: "OnboardingSignal_user_key_unique")
   @@index([key, isTrue])
   @@schema("public")
 }
 
-model OnboardingAuditLog {
-  id          String   @id @default(dbgenerated("(gen_random_uuid())::text"))
-  userId      String?
-  actorUserId String?
-  action      String   @db.VarChar(80) // "STEP_COMPLETED", "STEP_RESET", "STEP_EDITED", "AUTO_EVALUATED"
-  payload     Json?
-  createdAt   DateTime @default(now())
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model oauth_client_states {
+  id            String   @id @db.Uuid
+  provider_type String
+  code_verifier String?
+  created_at    DateTime @db.Timestamptz(6)
 
-  @@index([action, createdAt])
+  @@index([created_at], map: "idx_oauth_client_states_created_at")
+  @@schema("auth")
+}
+
+model BlockedUser {
+  id        String   @id
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+  @@index([blockerId])
+  @@schema("public")
+}
+
+model CustomRequest {
+  id             String              @id
+  creatorId      String
+  requesterId    String
+  title          String
+  description    String
+  budget         Int
+  status         CustomRequestStatus @default(PENDING)
+  escrowLipz     Int                 @default(0)
+  deliveryUrl    String?
+  creatorMessage String?
+  deadline       DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime
+  acceptedAt     DateTime?
+  completedAt    DateTime?
+
+  @@index([createdAt(sort: Desc)])
+  @@index([creatorId])
+  @@index([requesterId])
+  @@index([status])
+  @@schema("public")
+}
+
+model DMSettings {
+  id                           String   @id
+  userId                       String   @unique
+  allowDMs                     Boolean  @default(true)
+  requireUnlock                Boolean  @default(false)
+  unlockPrice                  Int      @default(500)
+  autoResponse                 String?
+  allowMediaFromNonSubscribers Boolean  @default(false)
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime
+
+  @@schema("public")
+}
+
+model EventTicket {
+  id                  String                @id
+  creatorId           String
+  title               String
+  description         String?
+  coverImage          String?
+  price               Int
+  totalTickets        Int?
+  soldTickets         Int                   @default(0)
+  eventDate           DateTime
+  status              EventTicketStatus     @default(UPCOMING)
+  streamUrl           String?
+  isActive            Boolean               @default(true)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime
+  EventTicketPurchase EventTicketPurchase[]
+
+  @@index([creatorId])
+  @@index([eventDate])
+  @@index([isActive])
+  @@index([status])
+  @@schema("public")
+}
+
+model EventTicketPurchase {
+  id            String      @id
+  eventTicketId String
+  userId        String
+  lipzPaid      Int
+  purchasedAt   DateTime    @default(now())
+  attended      Boolean     @default(false)
+  EventTicket   EventTicket @relation(fields: [eventTicketId], references: [id])
+
+  @@unique([eventTicketId, userId])
+  @@index([purchasedAt(sort: Desc)])
+  @@index([userId])
+  @@schema("public")
+}
+
+model MessageRequest {
+  id          String    @id
+  fromUserId  String
+  toUserId    String
+  message     String
+  status      String    @default("PENDING")
+  respondedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([fromUserId])
+  @@index([status])
+  @@index([toUserId])
+  @@schema("public")
+}
+
+model SubscriberPost {
+  id               String            @id
+  creatorId        String
+  tierId           String?
+  content          String
+  mediaUrls        Json?             @default("[]")
+  likesCount       Int               @default(0)
+  commentsCount    Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime
+  SubscriptionTier SubscriptionTier? @relation(fields: [tierId], references: [id])
+
+  @@index([createdAt(sort: Desc)])
+  @@index([creatorId])
+  @@index([tierId])
+  @@schema("public")
+}
+
+model SubscriptionPayment {
+  id               String           @id
+  subscriptionId   String
+  userId           String
+  creatorId        String
+  tierId           String
+  lipzAmount       Int
+  amountCents      Int
+  platformFeeCents Int
+  creatorNetCents  Int
+  periodStart      DateTime
+  periodEnd        DateTime
+  status           String           @default("SUCCESS")
+  failureReason    String?
+  paidAt           DateTime         @default(now())
+  createdAt        DateTime         @default(now())
+  UserSubscription UserSubscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([creatorId])
+  @@index([paidAt(sort: Desc)])
+  @@index([subscriptionId])
+  @@index([userId])
+  @@schema("public")
+}
+
+model SubscriptionTier {
+  id               String             @id
+  creatorId        String
+  name             String
+  description      String?
+  pricePerMonth    Int
+  benefits         Json               @default("[]")
+  isActive         Boolean            @default(true)
+  trialDays        Int                @default(0)
+  displayOrder     Int                @default(0)
+  color            String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime
+  SubscriberPost   SubscriberPost[]
+  UserSubscription UserSubscription[]
+
+  @@index([creatorId])
+  @@index([isActive])
+  @@schema("public")
+}
+
+model UserSubscription {
+  id                  String                @id
+  userId              String
+  tierId              String
+  creatorId           String
+  status              String                @default("ACTIVE")
+  startedAt           DateTime              @default(now())
+  currentPeriodStart  DateTime
+  currentPeriodEnd    DateTime
+  cancelAtPeriodEnd   Boolean               @default(false)
+  cancelledAt         DateTime?
+  trialEndsAt         DateTime?
+  totalPaid           Int                   @default(0)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime
+  SubscriptionPayment SubscriptionPayment[]
+  SubscriptionTier    SubscriptionTier      @relation(fields: [tierId], references: [id])
+
+  @@unique([userId, creatorId])
+  @@index([creatorId])
+  @@index([currentPeriodEnd])
+  @@index([status])
+  @@index([tierId])
+  @@index([userId])
+  @@schema("public")
+}
+
+model Withdrawal {
+  id             String           @id
+  userId         String
+  amountCents    Int
+  status         WithdrawalStatus @default(PENDING)
+  paymentMethod  String
+  paymentDetails Json
+  stripePayoutId String?
+  processedAt    DateTime?
+  failureReason  String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime
+
+  @@index([createdAt(sort: Desc)])
+  @@index([status])
+  @@index([userId])
+  @@schema("public")
+}
+
+model onboarding_audit_log {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id       String?
+  actor_user_id String?
+  action        String   @db.VarChar(80)
+  payload       Json?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([action, created_at], map: "onboarding_audit_action_created")
+  @@schema("public")
+}
+
+model onboarding_config {
+  id                 String   @id @default("default")
+  active_version     Int      @default(1)
+  locked             Boolean  @default(false)
+  updated_by_user_id String?
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@schema("public")
+}
+
+model onboarding_signal {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id             String
+  key                 String    @db.VarChar(120)
+  value_json          Json?
+  is_true             Boolean   @default(false)
+  source              String?   @db.VarChar(80)
+  verified_by_user_id String?
+  verified_at         DateTime? @db.Timestamptz(6)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([user_id, key])
+  @@index([key, is_true], map: "onboarding_signal_key_true")
+  @@schema("public")
+}
+
+model onboarding_step {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version              Int                    @default(1)
+  sort_order           Int                    @default(0)
+  is_active            Boolean                @default(true)
+  key                  String                 @db.VarChar(120)
+  title                String                 @db.VarChar(200)
+  description          String?
+  category             String                 @default("core") @db.VarChar(50)
+  is_required          Boolean                @default(true)
+  allow_self_attest    Boolean                @default(true)
+  requires_review      Boolean                @default(false)
+  jurisdictions        Json?
+  evidence_type        String                 @default("NONE") @db.VarChar(20)
+  evidence_hint        String?
+  auto_rule            Json?
+  xp_reward            Int                    @default(0)
+  badge_key            String?
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  user_onboarding_step user_onboarding_step[]
+
+  @@unique([version, key])
+  @@index([is_active, version, sort_order], map: "onboarding_step_active_version_order")
+  @@schema("public")
+}
+
+model user_onboarding_step {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String
+  step_id         String          @db.Uuid
+  status          String          @default("PENDING") @db.VarChar(20)
+  self_attested   Boolean         @default(false)
+  auto_detected   Boolean         @default(false)
+  completed_at    DateTime?       @db.Timestamptz(6)
+  completed_by    String          @default("USER") @db.VarChar(20)
+  evidence_url    String?
+  evidence_json   Json?
+  notes           String?
+  created_at      DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime        @default(now()) @db.Timestamptz(6)
+  onboarding_step onboarding_step @relation(fields: [step_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, step_id])
+  @@index([user_id, status], map: "user_onboarding_step_user_status")
+  @@schema("public")
+}
+
+model cybersectstemp {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String
+  email_hash  String   @unique
+  signup_type String   @default("creator")
+  source      String?
+  ip_hash     String?
+  user_agent  String?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([created_at(sort: Desc)])
+  @@index([ip_hash])
+  @@index([signup_type])
+  @@schema("public")
+}
+
+model CollabAgreementSnapshot {
+  id              String           @id @default(dbgenerated("(gen_random_uuid())::text"))
+  proposal_id     String
+  workspace_id    String?
+  snapshot_json   Json             @default("{}")
+  created_at      DateTime         @default(now()) @db.Timestamptz(6)
+  CollabProposal  CollabProposal   @relation(fields: [proposal_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  CollabWorkspace CollabWorkspace? @relation(fields: [workspace_id], references: [id], onUpdate: NoAction)
+
+  @@index([proposal_id], map: "idx_collabsnapshot_proposal")
+  @@schema("public")
+}
+
+model CollabFile {
+  id              String          @id @default(dbgenerated("(gen_random_uuid())::text"))
+  workspace_id    String
+  storage_path    String          @unique
+  filename        String
+  mime            String?
+  size            Int?
+  category        String          @default("RAW")
+  uploaded_by_id  String
+  created_at      DateTime        @default(now()) @db.Timestamptz(6)
+  User            User            @relation(fields: [uploaded_by_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  CollabWorkspace CollabWorkspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([workspace_id], map: "idx_collabfile_workspace")
+  @@schema("public")
+}
+
+model CollabProposal {
+  id                                          String                    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  created_by_id                               String
+  recipient_handle                            String
+  recipient_user_id                           String?
+  status                                      String                    @default("DRAFT")
+  title                                       String?
+  created_at                                  DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at                                  DateTime                  @default(now()) @db.Timestamptz(6)
+  CollabAgreementSnapshot                     CollabAgreementSnapshot[]
+  User_CollabProposal_created_by_idToUser     User                      @relation("CollabProposal_created_by_idToUser", fields: [created_by_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_CollabProposal_recipient_user_idToUser User?                     @relation("CollabProposal_recipient_user_idToUser", fields: [recipient_user_id], references: [id], onUpdate: NoAction)
+  CollabTerm                                  CollabTerm[]
+  CollabWorkspace                             CollabWorkspace?
+
+  @@index([created_by_id], map: "idx_collabproposal_created_by")
+  @@index([recipient_handle], map: "idx_collabproposal_recipient_handle")
+  @@index([recipient_user_id], map: "idx_collabproposal_recipient_user")
+  @@schema("public")
+}
+
+model CollabTerm {
+  id                                                                String              @id @default(dbgenerated("(gen_random_uuid())::text"))
+  proposal_id                                                       String
+  term_key                                                          String
+  is_required                                                       Boolean             @default(true)
+  status                                                            String              @default("PROPOSED")
+  active_version_id                                                 String?
+  created_at                                                        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at                                                        DateTime            @default(now()) @db.Timestamptz(6)
+  CollabProposal                                                    CollabProposal      @relation(fields: [proposal_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  CollabTermVersion_CollabTerm_active_version_idToCollabTermVersion CollabTermVersion?  @relation("CollabTerm_active_version_idToCollabTermVersion", fields: [active_version_id], references: [id], onUpdate: NoAction, map: "collabterm_active_version_fk")
+  CollabTermComment                                                 CollabTermComment[]
+  CollabTermVersion_CollabTermVersion_term_idToCollabTerm           CollabTermVersion[] @relation("CollabTermVersion_term_idToCollabTerm")
+
+  @@unique([proposal_id, term_key])
+  @@index([active_version_id], map: "idx_collabterm_active_version")
+  @@index([proposal_id], map: "idx_collabterm_proposal")
+  @@schema("public")
+}
+
+model CollabTermComment {
+  id         String     @id @default(dbgenerated("(gen_random_uuid())::text"))
+  term_id    String
+  author_id  String
+  body       String
+  created_at DateTime   @default(now()) @db.Timestamptz(6)
+  User       User       @relation(fields: [author_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  CollabTerm CollabTerm @relation(fields: [term_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([term_id], map: "idx_collabtermcomment_term")
+  @@schema("public")
+}
+
+model CollabTermVersion {
+  id                                                         String       @id @default(dbgenerated("(gen_random_uuid())::text"))
+  term_id                                                    String
+  created_by_id                                              String
+  value_json                                                 Json         @default("{}")
+  created_at                                                 DateTime     @default(now()) @db.Timestamptz(6)
+  CollabTerm_CollabTerm_active_version_idToCollabTermVersion CollabTerm[] @relation("CollabTerm_active_version_idToCollabTermVersion")
+  User                                                       User         @relation(fields: [created_by_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  CollabTerm_CollabTermVersion_term_idToCollabTerm           CollabTerm   @relation("CollabTermVersion_term_idToCollabTerm", fields: [term_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([term_id], map: "idx_collabtermversion_term")
+  @@schema("public")
+}
+
+model CollabWorkspace {
+  id                      String                    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  proposal_id             String                    @unique
+  status                  String                    @default("ACTIVE")
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  CollabAgreementSnapshot CollabAgreementSnapshot[]
+  CollabFile              CollabFile[]
+  CollabProposal          CollabProposal            @relation(fields: [proposal_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("public")
+}
+
+enum BundleType {
+  PHOTOSET
+  VIDEO_PACK
+  MIXED
+
   @@schema("public")
 }
 
@@ -1231,9 +1629,7 @@ enum Role {
   CREATOR
   FAN
   MOD
-  ADMIN
-  SUPERADMIN
-            
+
   @@schema("public")
 }
 
@@ -1252,6 +1648,7 @@ enum TransactionType {
   BUNDLE_PURCHASE
   EVENT_TICKET
   CUSTOM_REQUEST
+  SUBSCRIPTION_PAYMENT
 
   @@schema("public")
 }
@@ -1353,4 +1750,35 @@ enum one_time_token_type {
   phone_change_token
 
   @@schema("auth")
+}
+
+enum CustomRequestStatus {
+  PENDING
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  DECLINED
+  CANCELLED
+  DISPUTED
+
+  @@schema("public")
+}
+
+enum EventTicketStatus {
+  UPCOMING
+  LIVE
+  ENDED
+  CANCELLED
+
+  @@schema("public")
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+
+  @@schema("public")
 }

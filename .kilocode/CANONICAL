@@ -1,0 +1,165 @@
+# 3ROTIX Canonical Stack - AI Assistant Reference
+
+> **⚠️ IMPORTANT:** Read this file first before making any changes to the codebase.
+
+This file serves as the **Single Source of Truth** for the 3ROTIX platform architecture. All AI assistants, code contributors, and developers must align with these decisions.
+
+---
+
+## Quick Navigation
+
+| Topic | Location |
+|-------|----------|
+| Full Architecture Spec | [`plans/CANONICAL_ARCHITECTURE.md`](plans/CANONICAL_ARCHITECTURE.md) |
+| XP System Details | [`docs/XP_TRIGGERS.md`](docs/XP_TRIGGERS.md) |
+| Auth Rules | [`.kilocode/rules/03_AUTH.md`](.kilocode/rules/03_AUTH.md) |
+| Security Bans | [`.kilocode/rules/001_hard_bans.md`](.kilocode/rules/001_hard_bans.md) |
+| Socket Security | [`.kilocode/rules/10_SOCKET_SECURITY.md`](.kilocode/rules/10_SOCKET_SECURITY.md) |
+| Routing Rules | [`.kilocode/rules/01_ROUTING.md`](.kilocode/rules/01_ROUTING.md) |
+
+---
+
+## Stack Summary (2025-2026 Best Practices)
+
+| Component | Technology | Reason |
+|-----------|------------|--------|
+| Framework | Next.js 13.4.19 (Pages Router) | User requirement - stable, well-documented |
+| Deployment | Vercel | Native Next.js support, edge functions |
+| Database | Supabase Postgres | Reliable, scalable, built-in RLS |
+| ORM | Prisma 6.19.1 | Type-safe, transactions, clean DX |
+| Auth | Supabase Auth + `@supabase/ssr` | Native JWT handling, SSR support |
+| Client | `@supabase/supabase-js` + `@supabase/ssr` | Modern SSR patterns |
+
+---
+
+## Non-Negotiable Rules
+
+### ✅ DO
+
+1. **Always use `@supabase/ssr`** for server-side auth (cookies, session refresh)
+2. **Always verify JWTs** in API routes using `supabase.auth.getUser()`
+3. **Use Prisma transactions** for XP awards (idempotency via `idempotency_key`)
+4. **Use RLS policies** on all Supabase tables
+5. **Keep service role key server-only** - never expose to client
+6. **Use connection pooling** with Prisma on Vercel (`prisma`/`accelerate`)
+
+### ❌ DON'T
+
+1. **Don't use `@supabase/auth-helpers-nextjs`** - deprecated, use `@supabase/ssr`
+2. **Don't expose Supabase URL/anon key in client bundles** without RLS
+3. **Don't award XP without idempotency checks**
+4. **Don't use `SERVICE_ROLE_KEY` in client-side code**
+5. **Don't bypass Prisma transactions** for multi-table writes
+
+---
+
+## Key File Locations
+
+```
+├── lib/
+│   ├── prisma.js          # Prisma client (singleton on server)
+│   ├── supabase/          # Supabase SSR clients
+│   │   ├── client.js      # Browser client
+│   │   ├── server.js      # SSR client (cookies)
+│   │   └── admin.js       # Service role client
+├── pages/api/             # API routes (Pages Router)
+├── utils/                 # Utilities
+│   ├── xp.js              # XP award utilities
+│   └── achievement-manager.js
+├── .kilocode/
+│   ├── rules/             # AI behavior rules
+│   └── CANONICAL_STACK.md # This file
+└── plans/
+    └── CANONICAL_ARCHITECTURE.md  # Full spec
+```
+
+---
+
+## Common Patterns
+
+### Server-Side Auth (SSR)
+```javascript
+import { createServerClient } from '@/utils/supabase/server'
+
+export async function getUser(req, res) {
+  const supabase = createServerClient(req, res)
+  const { data: { user }, error } = await supabase.auth.getUser()
+  return user
+}
+```
+
+### API Route Auth
+```javascript
+import { createServerClient } from '@supabase/ssr'
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+export default async function handler(req, res) {
+  const supabase = createServerClient(req, res)
+  const { data: { user }, error } = await supabase.auth.getUser()
+  
+  if (!user) return res.status(401).json({ error: 'Unauthorized' })
+  
+  // Use user.id for database operations
+}
+```
+
+### XP Award (Idempotent)
+```javascript
+await prisma.$transaction(async (tx) => {
+  // Check idempotency
+  const existing = await tx.xPLog.findUnique({
+    where: { idempotency_key }
+  })
+  if (existing) return // Already awarded
+  
+  // Award XP
+  await tx.xPLog.create({ ... })
+  await tx.user.update({ ... })
+})
+```
+
+---
+
+## Environment Variables Required
+
+```env
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your-project-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+# Prisma (Vercel)
+DATABASE_URL=your-supabase-connection-string
+
+# Optional
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
+```
+
+---
+
+## Migration Status
+
+See [`plans/CANONICAL_ARCHITECTURE.md`](plans/CANONICAL_ARCHITECTURE.md) for the full migration plan.
+
+**Current state:** Project already uses `@supabase/ssr` and Prisma. Minor cleanup needed on duplicate helpers.
+
+---
+
+## For AI Assistants
+
+When generating code for this project:
+
+1. **Check this file first** for stack decisions
+2. **Use existing patterns** in `lib/supabase/` and `lib/prisma.js`
+3. **Follow rules** in `.kilocode/rules/`
+4. **Use TypeScript** for new files (user prefers JS but TS is acceptable)
+5. **Test auth flows** - never bypass auth checks
+6. **Use Prisma transactions** for any multi-table operations
+
+---
+
+_Last updated: 2026-01-06_
+_Stack: Next.js Pages Router + Supabase Auth + Prisma + Vercel_

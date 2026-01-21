@@ -45,26 +45,37 @@ export default withAuth(async function handler(req, res) {
       }),
     ]);
 
-    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user) return res.status(404).json({ ok: false, error: "User not found" });
 
     // If XP is “paused”, you can choose to hide stats/logs without breaking the route
-    if (!XP_ENABLED) {
-      return res.status(200).json({
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          handle: user.handle,
-          image: user.image,
-          rank: user.rank,
-          totalXp: user.totalXp,
-          createdAt: user.createdAt,
-        },
-        stats: null,
-        recent: [],
-        xpPaused: true,
-      });
-    }
+    // If XP is “paused”, return zeroed stats (never null) so the dashboard can’t crash
+if (!XP_ENABLED) {
+  return res.status(200).json({
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      handle: user.handle,
+      image: user.image,
+      rank: user.rank,
+      totalXp: user.totalXp,
+      createdAt: user.createdAt,
+    },
+    stats: {
+      monthXp: 0,
+      totalXp: user.totalXp || 0,
+      rank: user.rank,
+      nextRank: null,
+      currentThreshold: 0,
+      nextThreshold: null,
+      toNext: 0,
+      pctToNext: 0,
+    },
+    recent: [],
+    xpPaused: true,
+  });
+}
+
 
     const monthXp = monthRows?.[0]?._sum?.xpValue || 0;
 
@@ -102,6 +113,6 @@ export default withAuth(async function handler(req, res) {
     });
   } catch (e) {
     console.error("user/overview error:", e);
-    return res.status(500).json({ error: e?.message || "Server error" });
+    return res.status(500).json({ ok: false, error: e?.message || "Server error" });
   }
 });

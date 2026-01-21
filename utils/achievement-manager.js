@@ -11,7 +11,7 @@ async function updateProgress({
   
   return prisma.$transaction(async (tx) => {
     // Get achievement
-    const achievement = await tx.achievement.findUnique({
+    const achievement = await tx.achievement.findUnique({ 
       where: { slug: achievementSlug }
     });
 

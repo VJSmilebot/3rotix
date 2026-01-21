@@ -1,35 +1,27 @@
-import { createClient } from '@supabase/supabase-js';
-import { prisma } from '../../../lib/prisma';
+import { withAuth } from "../../../lib/auth-middleware.js";
+import { createSupabaseServerClient } from "../../../utils/supabase/server.js";
+import { prisma } from "../../../lib/prisma.js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
   const { bundleId } = req.query;
 
   if (!bundleId) {
-    return res.status(400).json({ error: 'Bundle ID required' });
+    return res.status(400).json({ ok: false, error: 'Bundle ID required' });
   }
 
-  // Optional: Check if user has purchased
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
+  const userId = req.user?.id;
 
-  let userId = null;
-  let hasPurchased = false;
+  try {
+    const supabase = createSupabaseServerClient(req, res);
+    
+    // Optional: Check if user has purchased
+    let hasPurchased = false;
 
-  if (token) {
-    const { data: { user } } = await supabase.auth.getUser(token);
-    if (user) {
-      userId = user.id;
-      
-      // Check if user purchased this bundle
+    if (userId) {
       const purchase = await prisma.bundlePurchase.findUnique({
         where: {
           bundleId_userId: {
@@ -41,9 +33,7 @@ export default async function handler(req, res) {
       
       hasPurchased = !!purchase;
     }
-  }
 
-  try {
     const bundle = await prisma.bundle.findUnique({
       where: { id: bundleId },
       include: {
@@ -57,29 +47,35 @@ export default async function handler(req, res) {
     });
 
     if (!bundle) {
-      return res.status(404).json({ error: 'Bundle not found' });
+      return res.status(404).json({ ok: false, error: 'Bundle not found' });
     }
 
     // If user hasn't purchased, don't return full item details
     if (!hasPurchased && bundle.creatorId !== userId) {
       return res.status(200).json({
-        ...bundle,
-        items: bundle.items.map(item => ({
-          id: item.id,
-          mediaType: item.mediaType,
-          order: item.order,
-          // Don't reveal mediaId until purchased
-        })),
-        hasPurchased: false,
+        ok: true,
+        data: {
+          ...bundle,
+          items: bundle.items.map(item => ({
+            id: item.id,
+            mediaType: item.mediaType,
+            order: item.order,
+            // Don't reveal mediaId until purchased
+          })),
+          hasPurchased: false,
+        },
       });
     }
 
     return res.status(200).json({
-      ...bundle,
-      hasPurchased,
+      ok: true,
+      data: {
+        ...bundle,
+        hasPurchased,
+      },
     });
   } catch (err) {
     console.error('Error fetching bundle:', err);
-    return res.status(500).json({ error: 'Failed to fetch bundle' });
+    return res.status(500).json({ ok: false, error: 'Failed to fetch bundle' });
   }
-}
+});

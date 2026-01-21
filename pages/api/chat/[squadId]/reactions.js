@@ -1,13 +1,19 @@
 import { prisma } from '../../../../lib/prisma';
+import { withAuth } from '../../../../lib/auth-middleware';
 
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
   try {
     const { squadId } = req.query;
-    const { messageId, userId, emoji } = req.body;
+    const { messageId, emoji } = req.body;
+    const userId = req.user.id;
+
+    if (!messageId || !emoji) {
+      return res.status(400).json({ ok: false, error: 'Missing messageId or emoji' });
+    }
 
     // Check if reaction already exists
     const existing = await prisma.messageReaction.findFirst({
@@ -23,7 +29,7 @@ export default async function handler(req, res) {
       await prisma.messageReaction.delete({
         where: { id: existing.id },
       });
-      return res.status(200).json({ removed: true });
+      return res.status(200).json({ ok: true, removed: true });
     }
 
     // Add reaction
@@ -35,9 +41,9 @@ export default async function handler(req, res) {
       },
     });
 
-    return res.status(200).json(reaction);
+    return res.status(200).json({ ok: true, data: reaction });
   } catch (error) {
     console.error('Reaction error:', error);
-    return res.status(500).json({ error: 'Failed to add reaction' });
+    return res.status(500).json({ ok: false, error: 'Failed to add reaction' });
   }
-}
+});

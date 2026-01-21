@@ -1,51 +1,35 @@
-import { createClient } from '@supabase/supabase-js';
+import { withAuth } from "../../../lib/auth-middleware.js";
 import { prisma } from '../../../lib/prisma';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-  if (authError || !user) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
+  const userId = req.user.id;
   const { amountCents, paymentMethod, paymentDetails } = req.body;
 
   if (!amountCents || amountCents <= 0) {
-    return res.status(400).json({ error: 'Invalid amount' });
+    return res.status(400).json({ ok: false, error: 'Invalid amount' });
   }
 
   if (!paymentMethod || !paymentDetails) {
-    return res.status(400).json({ error: 'Payment method and details required' });
+    return res.status(400).json({ ok: false, error: 'Payment method and details required' });
   }
 
   // Minimum withdrawal: $10
   if (amountCents < 1000) {
-    return res.status(400).json({ error: 'Minimum withdrawal is $10.00' });
+    return res.status(400).json({ ok: false, error: 'Minimum withdrawal is $10.00' });
   }
 
   try {
     const wallet = await prisma.wallet.findUnique({
-      where: { userId: user.id },
+      where: { userId },
     });
 
     if (!wallet || wallet.earningsCents < amountCents) {
       return res.status(400).json({ 
+        ok: false, 
         error: 'Insufficient earnings balance',
         required: amountCents,
         current: wallet?.earningsCents || 0,
@@ -56,7 +40,7 @@ export default async function handler(req, res) {
     const [withdrawal, updatedWallet] = await prisma.$transaction([
       prisma.withdrawal.create({
         data: {
-          userId: user.id,
+          userId,
           amountCents: parseInt(amountCents),
           paymentMethod,
           paymentDetails,
@@ -65,7 +49,7 @@ export default async function handler(req, res) {
       }),
       
       prisma.wallet.update({
-        where: { userId: user.id },
+        where: { userId },
         data: {
           earningsCents: {
             decrement: parseInt(amountCents),
@@ -75,12 +59,14 @@ export default async function handler(req, res) {
     ]);
 
     return res.status(200).json({ 
-      success: true, 
-      withdrawal,
-      newBalance: updatedWallet.earningsCents,
+      ok: true, 
+      data: { 
+        withdrawal,
+        newBalance: updatedWallet.earningsCents,
+      }
     });
   } catch (err) {
     console.error('Error creating withdrawal:', err);
-    return res.status(500).json({ error: 'Failed to request withdrawal' });
+    return res.status(500).json({ ok: false, error: 'Failed to request withdrawal' });
   }
-}
+});

@@ -15,17 +15,14 @@ export async function middleware(request) {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
-          // keep request cookies in sync for the rest of this middleware run
           cookiesToSet.forEach(({ name, value }) => {
             request.cookies.set(name, value);
           });
 
-          // re-create response so Next sees the updated request headers/cookies
           response = NextResponse.next({
             request: { headers: request.headers },
           });
 
-          // write cookies to the outgoing response
           cookiesToSet.forEach(({ name, value, options }) => {
             response.cookies.set(name, value, options);
           });
@@ -34,8 +31,13 @@ export async function middleware(request) {
     }
   );
 
-  // refresh tokens + sync cookies
-  await supabase.auth.updateSession();
+  // Refresh session if refresh token exists
+  const { data, error } = await supabase.auth.refreshSession();
+  
+  if (error || !data.session) {
+    // Token refresh failed or no session — just continue
+    return response;
+  }
 
   return response;
 }

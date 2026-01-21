@@ -1,44 +1,32 @@
-import { createClient } from '@supabase/supabase-js';
-import { prisma } from '../../../lib/prisma';
+import { withAuth } from "../../../lib/auth-middleware.js";
+import { prisma } from "../../../lib/prisma.js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
+  const userId = req.user?.id;
 
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-  if (authError || !user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!userId) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
 
   const { title, description, coverImage, price, type, items } = req.body;
 
   if (!title || !price || price <= 0) {
-    return res.status(400).json({ error: 'Title and valid price required' });
+    return res.status(400).json({ ok: false, error: 'Title and valid price required' });
   }
 
   if (!items || items.length === 0) {
-    return res.status(400).json({ error: 'Bundle must contain at least one item' });
+    return res.status(400).json({ ok: false, error: 'Bundle must contain at least one item' });
   }
 
   try {
     // Create bundle with items in a transaction
     const bundle = await prisma.bundle.create({
       data: {
-        creatorId: user.id,
+        creatorId: userId,
         title,
         description,
         coverImage,
@@ -57,9 +45,9 @@ export default async function handler(req, res) {
       },
     });
 
-    return res.status(200).json({ success: true, bundle });
+    return res.status(200).json({ ok: true, data: { bundle } });
   } catch (err) {
     console.error('Error creating bundle:', err);
-    return res.status(500).json({ error: 'Failed to create bundle' });
+    return res.status(500).json({ ok: false, error: 'Failed to create bundle' });
   }
-}
+});

@@ -1,123 +1,146 @@
-import { createClient } from '@supabase/supabase-js';
-import { prisma } from '../../../lib/prisma';
+import { createClient } from "@supabase/supabase-js";
+import { prisma } from "../../../lib/prisma";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+/**
+ * Unlock a paid post
+ * Body: { postId }
+ * Rule: 1 Lipz = 1 cent
+ */
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
+  const token =
+    req.headers.authorization?.replace("Bearer ", "") ||
+    req.cookies["sb-access-token"];
 
   if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser(token);
 
   if (authError || !user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const { conversationId } = req.body;
-
-  if (!conversationId) {
-    return res.status(400).json({ error: 'Conversation ID required' });
+  const { postId } = req.body || {};
+  if (!postId) {
+    return res.status(400).json({ error: "postId required" });
   }
 
   try {
-    const conversation = await prisma.conversation.findUnique({
-      where: { id: conversationId },
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
     });
 
-    if (!conversation) {
-      return res.status(404).json({ error: 'Conversation not found' });
+    if (!post) {
+      return res.status(404).json({ error: "Post not found" });
     }
 
-    if (conversation.isUnlocked) {
-      return res.status(400).json({ error: 'Already unlocked' });
+    if (!post.isPaid || !post.unlockPrice) {
+      return res.status(400).json({ error: "Post does not require unlock" });
     }
 
-    if (!conversation.unlockPrice) {
-      return res.status(400).json({ error: 'No unlock required' });
+    if (post.creatorId === user.id) {
+      return res.status(400).json({ error: "You can't unlock your own post" });
     }
 
-    // Get wallet
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId: user.id },
+    const existing = await prisma.postUnlock.findUnique({
+      where: { postId_userId: { postId, userId: user.id } },
     });
 
-    if (!wallet || wallet.lipzBalance < conversation.unlockPrice) {
-      return res.status(400).json({ 
-        error: 'Insufficient Lipz balance',
-        required: conversation.unlockPrice,
-        current: wallet?.lipzBalance || 0,
-      });
+    if (existing) {
+      return res.status(400).json({ error: "Already unlocked" });
     }
 
-    const creatorId = conversation.participant1Id === user.id 
-      ? conversation.participant2Id 
-      : conversation.participant1Id;
+    const settings = await prisma.platformSettings.findUnique({
+      where: { id: "default" },
+      select: { globalplatformcutpercent: true },
+    });
 
-    const platformFeeCents = Math.floor((conversation.unlockPrice * 0.10) * 100);
-    const creatorNetCents = Math.floor(conversation.unlockPrice * 0.90 * 100);
+    const lipzAmount = Number(post.unlockPrice);
+    const feePercent = Number(settings?.globalplatformcutpercent ?? 10);
+    const platformFeeCents = Math.floor((lipzAmount * feePercent) / 100);
+    const creatorNetCents = lipzAmount - platformFeeCents;
 
-    // Process unlock payment
-    const [updatedConversation, , updatedBuyerWallet, updatedCreatorWallet] = await prisma.$transaction([
-      prisma.conversation.update({
-        where: { id: conversationId },
+    const result = await prisma.$transaction(async (tx) => {
+      const unlock = await tx.postUnlock.create({
         data: {
-          isUnlocked: true,
-          unlockedAt: new Date(),
+          postId,
+          userId: user.id,
+          lipzPaid: lipzAmount,
         },
-      }),
+      });
 
-      prisma.transaction.create({
+      const dec = await tx.wallet.updateMany({
+        where: { userId: user.id, lipzBalance: { gte: lipzAmount } },
+        data: { lipzBalance: { decrement: lipzAmount } },
+      });
+
+      if (dec.count !== 1) throw new Error("INSUFFICIENT_LIPZ");
+
+      await tx.wallet.upsert({
+        where: { userId: post.creatorId },
+        create: {
+          userId: post.creatorId,
+          lipzBalance: 0,
+          earningsCents: creatorNetCents,
+          currency: "USD",
+        },
+        update: { earningsCents: { increment: creatorNetCents } },
+      });
+
+      await tx.transaction.create({
         data: {
           userId: user.id,
-          type: 'DM_UNLOCK',
-          lipzAmount: conversation.unlockPrice,
-          amountCents: conversation.unlockPrice * 100,
+          creatorId: post.creatorId,
+          type: "POST_UNLOCK",
+          lipzAmount,
+          amountCents: lipzAmount,
           platformFeeCents,
           creatorNetCents,
           metadata: {
-            conversationId,
-            creatorId,
+            postId,
           },
         },
-      }),
+      });
 
-      prisma.wallet.update({
+      const updatedBuyerWallet = await tx.wallet.findUnique({
         where: { userId: user.id },
-        data: {
-          lipzBalance: {
-            decrement: conversation.unlockPrice,
-          },
-        },
-      }),
+      });
 
-      prisma.wallet.update({
-        where: { userId: creatorId },
-        data: {
-          earningsCents: {
-            increment: creatorNetCents,
-          },
-        },
-      }),
-    ]);
+      return { unlock, updatedBuyerWallet };
+    });
 
     return res.status(200).json({
       success: true,
-      conversation: updatedConversation,
-      newBalance: updatedBuyerWallet.lipzBalance,
+      unlock: result.unlock,
+      newBalance: result.updatedBuyerWallet?.lipzBalance ?? 0,
     });
   } catch (err) {
-    console.error('Error unlocking conversation:', err);
-    return res.status(500).json({ error: 'Failed to unlock conversation' });
+    if (err?.message === "INSUFFICIENT_LIPZ") {
+      const wallet = await prisma.wallet.findUnique({ where: { userId: user.id } });
+      return res.status(400).json({
+        error: "Insufficient Lipz balance",
+        current: wallet?.lipzBalance ?? 0,
+      });
+    }
+
+    if (err?.code === "P2002") {
+      return res.status(400).json({ error: "Already unlocked" });
+    }
+
+    console.error("Error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 }

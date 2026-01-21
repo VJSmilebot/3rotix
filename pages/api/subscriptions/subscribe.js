@@ -1,55 +1,47 @@
-import { createClient } from '@supabase/supabase-js';
-import { prisma } from '../../../lib/prisma';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+import { prisma } from "../../../lib/prisma";
+import { withAuth } from "../../../lib/auth-middleware";
+import crypto from "crypto";
 
 async function attemptAutoTopUp(userId, requiredLipz) {
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/wallet/auto-topup/process`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.INTERNAL_API_KEY,
-      },
-      body: JSON.stringify({ userId, requiredLipz }),
-    });
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_BASE_URL}/api/wallet/auto-topup/process`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.INTERNAL_API_KEY,
+        },
+        body: JSON.stringify({ userId, requiredLipz }),
+      }
+    );
 
-    if (response.ok) {
-      const data = await response.json();
-      return { success: true, data };
-    }
+    if (response.ok) return { success: true, data: await response.json() };
     return { success: false };
   } catch (err) {
-    console.error('Auto-top-up attempt failed:', err);
+    console.error("Auto-top-up attempt failed:", err);
     return { success: false };
   }
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function addBillingPeriod(date) {
+  return addDays(date, 30);
+}
+
+export default withAuth(async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-  if (authError || !user) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const { tierId } = req.body;
+  const userId = req.user.id;
+  const { tierId } = req.body || {};
 
   if (!tierId) {
-    return res.status(400).json({ error: 'Tier ID required' });
+    return res.status(400).json({ ok: false, error: "tierId required" });
   }
 
   try {
@@ -58,165 +50,215 @@ export default async function handler(req, res) {
     });
 
     if (!tier || !tier.isActive) {
-      return res.status(404).json({ error: 'Tier not found or inactive' });
+      return res.status(404).json({ ok: false, error: "Tier not found or inactive" });
     }
 
-    if (tier.creatorId === user.id) {
-      return res.status(400).json({ error: "You can't subscribe to yourself" });
-    }
-
-    // Check if already subscribed to this creator
-    const existing = await prisma.userSubscription.findUnique({
-      where: {
-        userId_creatorId: {
-          userId: user.id,
-          creatorId: tier.creatorId,
-        },
-      },
-    });
-
-    if (existing && existing.status === 'ACTIVE') {
-      return res.status(400).json({ error: 'Already subscribed to this creator' });
+    if (tier.creatorId === userId) {
+      return res.status(400).json({ ok: false, error: "You can't subscribe to yourself" });
     }
 
     const now = new Date();
-    const trialEndsAt = tier.trialDays > 0 
-      ? new Date(now.getTime() + tier.trialDays * 24 * 60 * 60 * 1000)
-      : null;
-    
-    const firstChargeDate = trialEndsAt || now;
-    const periodEnd = new Date(firstChargeDate.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    // If no trial, charge immediately
-    if (!trialEndsAt) {
-      let wallet = await prisma.wallet.findUnique({
-        where: { userId: user.id },
-      });
+    const lipzAmount = Number(tier.pricePerMonth);
+    if (!Number.isInteger(lipzAmount) || lipzAmount <= 0) {
+      return res.status(400).json({ ok: false, error: "Invalid tier price" });
+    }
 
-      // AUTO-TOP-UP LOGIC
-      if (!wallet || wallet.lipzBalance < tier.pricePerMonth) {
-        const autoTopUpResult = await attemptAutoTopUp(user.id, tier.pricePerMonth);
-        
-        if (autoTopUpResult.success) {
-          // Reload wallet after auto-top-up
-          wallet = await prisma.wallet.findUnique({
-            where: { userId: user.id },
-          });
-        } else {
-          return res.status(400).json({ 
-            error: 'Insufficient Lipz balance',
-            required: tier.pricePerMonth,
-            current: wallet?.lipzBalance || 0,
-            autoTopUpFailed: wallet?.autoTopUpEnabled || false,
-          });
-        }
-      }
+    const settings = await prisma.platformSettings.findUnique({
+      where: { id: "default" },
+      select: { globalplatformcutpercent: true },
+    });
 
-      // Double check we have enough after auto-top-up
-      if (wallet.lipzBalance < tier.pricePerMonth) {
-        return res.status(400).json({ 
-          error: 'Insufficient Lipz balance even after auto-top-up',
-          required: tier.pricePerMonth,
-          current: wallet.lipzBalance,
-        });
-      }
+    const feePercent = Number(settings?.globalplatformcutpercent ?? 10);
+    const platformFeeCents = Math.floor((lipzAmount * feePercent) / 100);
+    const creatorNetCents = lipzAmount - platformFeeCents;
 
-      // Calculate fees
-      const platformFeeCents = Math.floor((tier.pricePerMonth * 0.10) * 100);
-      const creatorNetCents = Math.floor(tier.pricePerMonth * 0.90 * 100);
+    const existing = await prisma.userSubscription.findUnique({
+      where: { userId_creatorId: { userId, creatorId: tier.creatorId } },
+    });
 
-      // Create subscription and process first payment
-      const [subscription, payment, updatedBuyerWallet, updatedCreatorWallet] = await prisma.$transaction([
-        // Create subscription
-        prisma.userSubscription.create({
-          data: {
-            userId: user.id,
-            tierId: tier.id,
-            creatorId: tier.creatorId,
-            status: 'ACTIVE',
-            currentPeriodStart: now,
-            currentPeriodEnd: periodEnd,
-            totalPaid: tier.pricePerMonth,
-          },
-        }),
-        
-        // Record payment
-        prisma.subscriptionPayment.create({
-          data: {
-            subscriptionId: '', // Will be updated
-            userId: user.id,
-            creatorId: tier.creatorId,
-            tierId: tier.id,
-            lipzAmount: tier.pricePerMonth,
-            amountCents: tier.pricePerMonth * 100,
-            platformFeeCents,
-            creatorNetCents,
-            periodStart: now,
-            periodEnd,
-            status: 'SUCCESS',
-          },
-        }),
-        
-        // Deduct from buyer
-        prisma.wallet.update({
-          where: { userId: user.id },
-          data: {
-            lipzBalance: {
-              decrement: tier.pricePerMonth,
+    // Optional: allow “uncancel”
+    // if (existing?.status === "ACTIVE" && existing.cancelAtPeriodEnd) { ... allow resubscribe logic ... }
+
+    if (existing && existing.status === "ACTIVE") {
+      return res.status(400).json({ ok: false, error: "Already subscribed to this creator" });
+    }
+
+    const trialDays = Number(tier.trialDays || 0);
+    const trialEndsAt = trialDays > 0 ? addDays(now, trialDays) : null;
+
+    const periodStart = now;
+    const periodEnd = trialEndsAt ? trialEndsAt : addBillingPeriod(now);
+
+    if (trialEndsAt) {
+      const subscriptionId = existing?.id ?? crypto.randomUUID();
+
+      const subscription = existing
+        ? await prisma.userSubscription.update({
+            where: { id: existing.id },
+            data: {
+              tierId: tier.id,
+              status: "ACTIVE",
+              currentPeriodStart: periodStart,
+              currentPeriodEnd: periodEnd,
+              trialEndsAt,
+              cancelAtPeriodEnd: false,
+              cancelledAt: null,
+              updatedAt: now,
             },
-          },
-        }),
-        
-        // Add to creator earnings
-        prisma.wallet.upsert({
-          where: { userId: tier.creatorId },
-          create: {
-            userId: tier.creatorId,
-            lipzBalance: 0,
-            earningsCents: creatorNetCents,
-          },
-          update: {
-            earningsCents: {
-              increment: creatorNetCents,
+          })
+        : await prisma.userSubscription.create({
+            data: {
+              id: subscriptionId,
+              userId,
+              tierId: tier.id,
+              creatorId: tier.creatorId,
+              status: "ACTIVE",
+              startedAt: now,
+              currentPeriodStart: periodStart,
+              currentPeriodEnd: periodEnd,
+              trialEndsAt,
+              cancelAtPeriodEnd: false,
+              totalPaid: 0,
+              updatedAt: now,
             },
-          },
-        }),
-      ]);
-
-      // Update payment with subscription ID
-      await prisma.subscriptionPayment.update({
-        where: { id: payment.id },
-        data: { subscriptionId: subscription.id },
-      });
+          });
 
       return res.status(200).json({
-        success: true,
-        subscription,
-        message: 'Subscribed successfully! First payment processed.',
-        newBalance: updatedBuyerWallet.lipzBalance,
+        ok: true,
+        data: { success: true, subscription, message: `Free trial started! ${trialDays} days free.` },
       });
-    } else {
-      // Free trial - no payment yet
-      const subscription = await prisma.userSubscription.create({
+    }
+
+    let wallet = await prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: { userId, lipzBalance: 0, earningsCents: 0, currency: "USD" },
+      });
+    }
+
+    if (wallet.lipzBalance < lipzAmount) {
+      const autoTopUp = await attemptAutoTopUp(userId, lipzAmount);
+      if (autoTopUp.success) {
+        wallet = await prisma.wallet.findUnique({ where: { userId } });
+      }
+    }
+
+    if (!wallet || wallet.lipzBalance < lipzAmount) {
+      return res.status(400).json({
+        ok: false,
+        error: "Insufficient Lipz balance",
+        required: lipzAmount,
+        current: wallet?.lipzBalance ?? 0,
+      });
+    }
+
+    const subscriptionPaymentId = crypto.randomUUID();
+
+    const result = await prisma.$transaction(async (tx) => {
+      const subscription = existing
+        ? await tx.userSubscription.update({
+            where: { id: existing.id },
+            data: {
+              tierId: tier.id,
+              status: "ACTIVE",
+              currentPeriodStart: periodStart,
+              currentPeriodEnd: periodEnd,
+              trialEndsAt: null,
+              cancelAtPeriodEnd: false,
+              cancelledAt: null,
+              totalPaid: { increment: lipzAmount },
+              updatedAt: now,
+            },
+          })
+        : await tx.userSubscription.create({
+            data: {
+              id: crypto.randomUUID(),
+              userId,
+              tierId: tier.id,
+              creatorId: tier.creatorId,
+              status: "ACTIVE",
+              startedAt: now,
+              currentPeriodStart: periodStart,
+              currentPeriodEnd: periodEnd,
+              cancelAtPeriodEnd: false,
+              totalPaid: lipzAmount,
+              updatedAt: now,
+            },
+          });
+
+      const dec = await tx.wallet.updateMany({
+        where: { userId, lipzBalance: { gte: lipzAmount } },
+        data: { lipzBalance: { decrement: lipzAmount } },
+      });
+      if (dec.count !== 1) throw new Error("INSUFFICIENT_LIPZ");
+
+      await tx.wallet.upsert({
+        where: { userId: tier.creatorId },
+        create: {
+          userId: tier.creatorId,
+          lipzBalance: 0,
+          earningsCents: creatorNetCents,
+          currency: "USD",
+        },
+        update: { earningsCents: { increment: creatorNetCents } },
+      });
+
+      const payment = await tx.subscriptionPayment.create({
         data: {
-          userId: user.id,
-          tierId: tier.id,
+          id: subscriptionPaymentId,
+          subscriptionId: subscription.id,
+          userId,
           creatorId: tier.creatorId,
-          status: 'ACTIVE',
-          currentPeriodStart: now,
-          currentPeriodEnd: periodEnd,
-          trialEndsAt,
+          tierId: tier.id,
+          lipzAmount,
+          amountCents: lipzAmount,
+          platformFeeCents,
+          creatorNetCents,
+          periodStart,
+          periodEnd,
+          status: "SUCCESS",
         },
       });
 
-      return res.status(200).json({
-        success: true,
-        subscription,
-        message: `Free trial started! ${tier.trialDays} days free.`,
+      await tx.transaction.create({
+        data: {
+          userId,
+          creatorId: tier.creatorId,
+          type: "SUBSCRIPTION_PAYMENT",
+          lipzAmount,
+          amountCents: lipzAmount,
+          platformFeeCents,
+          creatorNetCents,
+          metadata: {
+            subscriptionId: subscription.id,
+            subscriptionPaymentId: payment.id,
+            tierId: tier.id,
+            periodStart,
+            periodEnd,
+          },
+        },
       });
-    }
+
+      const updatedBuyerWallet = await tx.wallet.findUnique({ where: { userId } });
+      return { subscription, payment, updatedBuyerWallet };
+    });
+
+    return res.status(200).json({
+      ok: true,
+      data: {
+        success: true,
+        subscription: result.subscription,
+        payment: result.payment,
+        message: "Subscribed successfully! Payment recorded.",
+        newBalance: result.updatedBuyerWallet?.lipzBalance ?? 0,
+      },
+    });
   } catch (err) {
-    console.error('Error subscribing:', err);
-    return res.status(500).json({ error: 'Failed to subscribe' });
+    if (err?.message === "INSUFFICIENT_LIPZ") {
+      return res.status(400).json({ ok: false, error: "Insufficient Lipz balance" });
+    }
+    console.error("Error subscribing:", err);
+    return res.status(500).json({ ok: false, error: "Failed to subscribe" });
   }
-}
+});

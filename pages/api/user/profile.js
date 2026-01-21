@@ -1,15 +1,18 @@
 // /pages/api/user/profile.js
 import { prisma } from '../../../lib/prisma';
 
+// Public endpoint - allows viewing user profiles by userId or handle
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
   try {
     const { userId, handle } = req.query;
 
-    console.log('Profile request:', { userId, handle });
+    if (!userId && !handle) {
+      return res.status(400).json({ ok: false, error: 'userId or handle required' });
+    }
 
     // If userId provided, fetch directly
     if (userId) {
@@ -29,12 +32,10 @@ export default async function handler(req, res) {
       });
 
       if (!user) {
-        console.log('User not found for userId:', userId);
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(404).json({ ok: false, error: 'User not found' });
       }
 
-      console.log('Found user:', user);
-      return res.status(200).json(user);
+      return res.status(200).json({ ok: true, data: user });
     }
 
     // If handle provided, fetch by handle
@@ -54,18 +55,13 @@ export default async function handler(req, res) {
       });
 
       if (!user) {
-        console.log('User not found for handle:', handle);
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(404).json({ ok: false, error: 'User not found' });
       }
 
-      console.log('Found user:', user);
-      return res.status(200).json(user);
+      return res.status(200).json({ ok: true, data: user });
     }
-
-    return res.status(400).json({ error: 'userId or handle required' });
   } catch (error) {
     console.error('Profile fetch error:', error);
-    return res.status(500).json({ error: error.message || 'Failed to fetch profile' });
+    return res.status(500).json({ ok: false, error: error.message || 'Failed to fetch profile' });
   }
 }
-  

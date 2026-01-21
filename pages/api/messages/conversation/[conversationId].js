@@ -1,44 +1,33 @@
-import { createClient } from '@supabase/supabase-js';
-import { prisma } from '../../../../lib/prisma';
+import { withAuth } from "../../../../lib/auth-middleware.js";
+import { prisma } from "../../../../lib/prisma.js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+export default withAuth(async function handler(req, res) {
+  if (req.method !== 'GET') {
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
+  }
 
-export default async function handler(req, res) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-
-  const conversationId = Array.isArray(req.query.conversationId)
-    ? req.query.conversationId[0]
-    : req.query.conversationId;
-
-  if (!conversationId) return res.status(400).json({ error: 'Missing conversationId' });
-
-  const token =
-    req.headers.authorization?.replace('Bearer ', '') ||
-    req.cookies['sb-access-token'];
-
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-  if (authError || !user) return res.status(401).json({ error: 'Unauthorized' });
+  const { conversationId } = req.query;
+  const userId = req.user.id;
 
   try {
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
     });
 
-    if (!conversation) return res.status(404).json({ error: 'Conversation not found' });
+    if (!conversation) {
+      return res.status(404).json({ ok: false, error: 'Conversation not found' });
+    }
 
     const isParticipant =
-      conversation.participant1Id === user.id || conversation.participant2Id === user.id;
+      conversation.participant1Id === userId || conversation.participant2Id === userId;
 
-    if (!isParticipant) return res.status(403).json({ error: 'Not allowed' });
+    if (!isParticipant) {
+      return res.status(403).json({ ok: false, error: 'Not allowed' });
+    }
 
-    return res.status(200).json(conversation);
+    return res.status(200).json({ ok: true, data: conversation });
   } catch (err) {
     console.error('Error loading conversation:', err);
-    return res.status(500).json({ error: 'Failed to load conversation' });
+    return res.status(500).json({ ok: false, error: 'Failed to load conversation' });
   }
-}
+});

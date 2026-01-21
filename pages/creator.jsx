@@ -1,482 +1,396 @@
-import { useState, useEffect } from 'react';
-import { getSupabaseClient } from '../utils/supabase/client';
-import VideoUploader from '../components/VideoUploader';
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/router";
+import { getSupabaseClient } from "../utils/supabase/client";
+
+function slugHandle(input) {
+  return String(input || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9_]/g, "");
+}
 
 export default function CreatorPage() {
-  const supabase = getSupabaseClient();
-  const [user, setUser] = useState(null);
+  const router = useRouter();
+  const supabase = useMemo(() => getSupabaseClient(), []);
+
+  const [loading, setLoading] = useState(true);
+  const [sbUser, setSbUser] = useState(null);
   const [dbUser, setDbUser] = useState(null);
+
   const [profile, setProfile] = useState({
-    name: '',
-    handle: '',
-    bio: '',
-    website: '',
-    twitter: '',
-    instagram: '',
-    image: '',
+    name: "",
+    handle: "",
+    bio: "",
+    website: "",
+    twitter: "",
+    instagram: "",
+    image: "",
     isPublic: true,
   });
-  const [myVideos, setMyVideos] = useState([]);
-  const [loadingVideos, setLoadingVideos] = useState(true);
+
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
-    loadUser();
-  }, []);
+    let dead = false;
 
-  async function loadUser() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      setUser(user);
-      loadProfile(user.email);
-    }
-  }
+    async function boot() {
+      setLoading(true);
 
-  async function loadProfile(email) {
-    try {
-      const res = await fetch(`/api/users/by-email?email=${encodeURIComponent(email)}`);
-      
-      if (!res.ok) {
-        console.error('Profile fetch failed:', res.status);
+      const { data } = await supabase.auth.getUser();
+      const user = data?.user || null;
+      if (!user) {
+        router.push("/login");
         return;
       }
-      
-      const data = await res.json();
-      setDbUser(data);
-      setProfile({
-        name: data.name || '',
-        handle: data.handle || '',
-        bio: data.bio || '',
-        website: data.website || '',
-        twitter: data.twitter || '',
-        instagram: data.instagram || '',
-        image: data.image || '',
-        isPublic: data.isPublic !== false,
-      });
-      loadVideos(data.id);
-    } catch (error) {
-      console.error('Failed to load profile:', error);
-    }
-  }
+      if (dead) return;
 
-  async function loadVideos(userId) {
-    setLoadingVideos(true);
-    try {
-      console.log('Loading videos for user:', userId);
-      const res = await fetch(`/api/videos?userId=${userId}`);
-      
-      if (!res.ok) {
-        console.error('Videos fetch failed:', res.status);
-        const errorData = await res.json();
-        console.error('Error details:', errorData);
-        return;
-      }
-      
-      const data = await res.json();
-      console.log('Loaded videos:', data);
-      setMyVideos(data || []);
-    } catch (error) {
-      console.error('Failed to load videos:', error);
-      setMyVideos([]);
-    } finally {
-      setLoadingVideos(false);
-    }
+      setSbUser(user);
+
+      // Pull canonical Prisma user (id/email/handle/image/etc)
+      // Pull canonical Prisma user (source of truth)
+try {
+  // 1) Get my Prisma user id (and mapping)
+  const meRes = await fetch("/api/me");
+  const meJson = await meRes.json().catch(() => ({}));
+  if (!meRes.ok || !meJson?.user?.id) {
+    throw new Error(meJson?.error || "Failed to load /api/me");
   }
+  if (dead) return;
+
+  // 2) Fetch full profile using Prisma id
+  const prismaUserId = meJson.user.id;
+  const r = await fetch(`/api/users/${prismaUserId}`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j?.user) throw new Error(j?.error || "Failed to load user profile");
+  if (dead) return;
+
+  setDbUser(j.user);
+  setProfile({
+    name: j.user.name || "",
+    handle: j.user.handle || "",
+    bio: j.user.bio || "",
+    website: j.user.website || "",
+    twitter: j.user.twitter || "",
+    instagram: j.user.instagram || "",
+    image: j.user.image || "",
+    isPublic: j.user.isPublic !== false,
+  });
+} catch (e) {
+  console.error("Failed to load db user:", e);
+} finally {
+  if (!dead) setLoading(false);
+}
+
+    }
+
+    boot();
+    return () => {
+      dead = true;
+    };
+  }, [router, supabase]);
 
   async function handleAvatarUpload(e) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !dbUser) return;
 
-    // Validate file type
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-      alert('Please upload a valid image (JPG, PNG, GIF, or WebP)');
+    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      alert("Upload a JPG, PNG, GIF, or WebP.");
       return;
     }
-
-    // Validate file size (2MB max)
     if (file.size > 2 * 1024 * 1024) {
-      alert('Image must be less than 2MB');
+      alert("Max 2MB.");
       return;
     }
 
     setUploadingAvatar(true);
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}.${fileExt}`;
-      const filePath = `${dbUser.id}/${fileName}`; // IMPORTANT: No "avatars/" prefix!
+      const ext = file.name.split(".").pop();
+      const path = `${dbUser.id}/${Date.now()}.${ext}`;
 
-      console.log('Uploading to path:', filePath);
-
-      // Delete old avatar if exists
-      if (profile.image && profile.image.includes('supabase.co/storage')) {
-        const oldPath = profile.image.split('/avatars/')[1];
+      // If existing avatar is in this bucket, try removing it (best-effort)
+      if (profile.image?.includes("/storage/v1/object/public/avatars/")) {
+        const idx = profile.image.indexOf("/avatars/");
+        const oldPath = idx !== -1 ? profile.image.slice(idx + "/avatars/".length) : null;
         if (oldPath) {
-          console.log('Deleting old avatar:', oldPath);
-          await supabase.storage.from('avatars').remove([oldPath]);
+          await supabase.storage.from("avatars").remove([oldPath]).catch(() => {});
         }
       }
 
-      // Upload new avatar
-      const { error: uploadError, data: uploadData } = await supabase.storage
-        .from('avatars')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: false
-        });
+      const { error: upErr } = await supabase.storage
+        .from("avatars")
+        .upload(path, file, { cacheControl: "3600", upsert: true });
 
-      if (uploadError) {
-        console.error('Upload error:', uploadError);
-        throw uploadError;
-      }
+      if (upErr) throw upErr;
 
-      console.log('Upload successful:', uploadData);
+      const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+      const url = data?.publicUrl;
+      if (!url) throw new Error("Could not get public URL");
 
-      // Get public URL
-      const { data } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
-
-      if (!data?.publicUrl) {
-        throw new Error('Failed to get public URL');
-      }
-
-      console.log('Public URL:', data.publicUrl);
-
-      setProfile({ ...profile, image: data.publicUrl });
-      alert('Avatar uploaded successfully!');
-    } catch (error) {
-      console.error('Avatar upload error:', error);
-      alert(`Failed to upload avatar: ${error.message}`);
+      setProfile((p) => ({ ...p, image: url }));
+      setSaved(false);
+    } catch (err) {
+      console.error("Avatar upload error:", err);
+      alert(err.message || "Avatar upload failed");
     } finally {
       setUploadingAvatar(false);
     }
   }
 
-  const handleSave = async () => {
-    if (!dbUser) {
-      alert('User not loaded');
-      return;
-    }
+  async function handleSave() {
+    if (!dbUser) return;
 
     setSaving(true);
+    setSaved(false);
+
     try {
-      const res = await fetch(`/api/users/${dbUser.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: profile.name.trim() || null,
-          bio: profile.bio.trim() || null,
-          image: profile.image || null,
-        })
+      const body = {
+        name: profile.name.trim() || null,
+        handle: slugHandle(profile.handle) || null,
+        bio: profile.bio.trim() || null,
+        website: profile.website.trim() || null,
+        twitter: profile.twitter.trim() || null,
+        instagram: profile.instagram.trim() || null,
+        image: profile.image || null,
+        isPublic: !!profile.isPublic,
+      };
+
+      const r = await fetch(`/api/users/${dbUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to save profile');
-      }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "Save failed");
+      
+await supabase.auth.updateUser({
+  data: {
+    full_name: saved.name || undefined,
+    name: saved.name || undefined,
+    avatar_url: saved.image || undefined,
+    picture: saved.image || undefined,
+  },
+});
 
-      alert('Profile saved!');
-    } catch (error) {
-      console.error('Save error:', error);
-      alert(error.message);
+      setSaved(true);
+      // refresh dbUser copy so redirects use latest handle
+      setDbUser((u) => ({ ...u, ...body, handle: body.handle || u.handle }));
+    } catch (e) {
+      console.error("Save error:", e);
+      alert(e.message || "Save failed");
     } finally {
       setSaving(false);
     }
-  };
-
-  async function handleDeleteVideo(videoId) {
-    if (!confirm('Are you sure you want to delete this video?')) return;
-
-    try {
-      const res = await fetch(`/api/videos/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoId }),
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to delete video');
-      }
-
-      // Reload videos
-      loadVideos(dbUser.id);
-      alert('Video deleted!');
-    } catch (error) {
-      console.error('Delete error:', error);
-      alert(error.message);
-    }
   }
 
-  const importFromLivepeer = async () => {
-    setImporting(true);
-    try {
-      const res = await fetch('/api/videos/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: dbUser.id }),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to import videos');
-      }
-
-      alert('Import started! Check back later for your videos.');
-    } catch (error) {
-      console.error('Import error:', error);
-      alert(error.message);
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  if (!user || !dbUser) {
+  if (loading) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p>Loading...</p>
-      </div>
+      <main className="min-h-screen flex items-center justify-center text-gray-200">
+        Loading…
+      </main>
     );
   }
 
-  const container = { maxWidth: 1200, margin: '0 auto', padding: '40px 20px' };
-  const section = { background: 'rgba(255,255,255,0.03)', border: '1px solid #2a2a2a', borderRadius: 12, padding: 24, marginBottom: 24 };
-  const label = { display: 'block', fontSize: 14, marginBottom: 6, opacity: 0.9 };
-  const input = { width: '100%', padding: 10, border: '1px solid #444', borderRadius: 8, background: '#111', color: '#fff', marginBottom: 16 };
-  const button = { padding: '12px 24px', background: 'rgb(219, 39, 119)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 };
+  const publicHandle = dbUser?.handle || profile.handle;
 
   return (
-    <div style={container}>
-      <h1 style={{ marginBottom: 32, fontSize: 32 }}>Creator Portal</h1>
+    <main className="min-h-screen px-6 py-10 text-gray-100">
+      <div className="max-w-4xl mx-auto">
+        <div className="flex items-center justify-between gap-4 mb-6">
+          <h1 className="text-3xl font-bold">Creator Portal</h1>
 
-      {/* Profile Settings */}
-      <div style={section}>
-        <h2 style={{ marginTop: 0, marginBottom: 20 }}>Profile Settings</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => router.push("/studio")}
+              className="rounded-md bg-pink-600 px-4 py-2 text-sm font-semibold hover:bg-pink-700"
+            >
+              Go to Studio →
+            </button>
 
-        {/* Avatar Upload */}
-        <div style={{ display: 'flex', gap: 20, alignItems: 'center', marginBottom: 24 }}>
-          <div style={{ 
-            width: 120, height: 120, borderRadius: '50%', overflow: 'hidden', 
-            background: '#222', border: '2px solid #444', display: 'grid', placeItems: 'center' 
-          }}>
-            {profile.image ? (
-              <img src={profile.image} alt="Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              <span style={{ color: '#666', fontSize: 12 }}>No photo</span>
-            )}
+            {publicHandle ? (
+              <button
+                onClick={() => router.push(`/c/${publicHandle}`)}
+                className="rounded-md border border-gray-700 bg-gray-900 px-4 py-2 text-sm font-semibold hover:bg-gray-800"
+              >
+                View Public Profile
+              </button>
+            ) : null}
           </div>
-          <div>
-            <label style={{ ...button, display: 'inline-block', cursor: 'pointer' }}>
-              {uploadingAvatar ? 'Uploading...' : 'Change Avatar'}
+        </div>
+
+        <section className="rounded-xl border border-gray-800 bg-black/40 p-6 shadow-lg">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-semibold">Profile Settings</h2>
+            <span className="text-xs text-gray-400">
+              Signed in as <span className="text-gray-200">{sbUser?.email}</span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-5 mb-6">
+            <div className="h-24 w-24 rounded-full overflow-hidden border border-gray-700 bg-gray-900">
+              {profile.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={profile.image} alt="Avatar" className="h-full w-full object-cover" />
+              ) : (
+                <div className="h-full w-full grid place-items-center text-xs text-gray-500">
+                  No avatar
+                </div>
+              )}
+            </div>
+
+            <label className="inline-flex items-center gap-3 rounded-md bg-pink-600 px-4 py-2 text-sm font-semibold cursor-pointer hover:bg-pink-700">
+              {uploadingAvatar ? "Uploading…" : "Change Avatar"}
               <input
                 type="file"
                 accept="image/*"
+                className="hidden"
                 onChange={handleAvatarUpload}
                 disabled={uploadingAvatar}
-                style={{ display: 'none' }}
               />
             </label>
-            <p style={{ fontSize: 13, opacity: 0.7, marginTop: 8 }}>JPG, PNG or GIF. Max 2MB.</p>
+
+            <div className="text-xs text-gray-400">
+              JPG/PNG/GIF/WebP • max 2MB
+            </div>
           </div>
-        </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-          <div>
-            <label style={label}>Name</label>
-            <input
-              type="text"
-              value={profile.name}
-              onChange={e => setProfile({...profile, name: e.target.value})}
-              style={input}
-              placeholder="Your display name"
-            />
-          </div>
-          <div>
-            <label style={label}>Handle</label>
-            <input
-              type="text"
-              value={profile.handle}
-              onChange={e => setProfile({...profile, handle: e.target.value})}
-              style={input}
-              placeholder="username"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label style={label}>Bio</label>
-          <textarea
-            value={profile.bio}
-            onChange={e => setProfile({...profile, bio: e.target.value})}
-            style={{...input, minHeight: 100, fontFamily: 'inherit'}}
-            placeholder="Tell people about yourself..."
-          />
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
-          <div>
-            <label style={label}>Website</label>
-            <input
-              type="url"
-              value={profile.website}
-              onChange={e => setProfile({...profile, website: e.target.value})}
-              style={input}
-              placeholder="https://..."
-            />
-          </div>
-          <div>
-            <label style={label}>Twitter</label>
-            <input
-              type="text"
-              value={profile.twitter}
-              onChange={e => setProfile({...profile, twitter: e.target.value})}
-              style={input}
-              placeholder="@username"
-            />
-          </div>
-          <div>
-            <label style={label}>Instagram</label>
-            <input
-              type="text"
-              value={profile.instagram}
-              onChange={e => setProfile({...profile, instagram: e.target.value})}
-              style={input}
-              placeholder="@username"
-            />
-          </div>
-        </div>
-
-        {/* Privacy Toggle */}
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={!profile.isPublic}
-              onChange={e => setProfile({...profile, isPublic: !e.target.checked})}
-              style={{ width: 18, height: 18 }}
-            />
-            <span>Hide my profile from public directory</span>
-          </label>
-        </div>
-
-        <button onClick={handleSave} disabled={saving} style={button}>
-          {saving ? 'Saving...' : 'Save Profile'}
-        </button>
-      </div>
-
-      {/* Video Upload */}
-      <div style={section}>
-        <VideoUploader onFinished={() => loadVideos(dbUser.id)} />
-      </div>
-
-      {/* My Videos */}
-      <div style={section}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ margin: 0 }}>My Videos ({myVideos.length})</h2>
-          <button 
-            onClick={importFromLivepeer}
-            disabled={importing}
-            style={{ 
-              ...button, 
-              background: importing ? '#666' : '#4338ca',
-              padding: '8px 16px',
-              fontSize: 14
-            }}
-          >
-            {importing ? 'Importing...' : '↻ Import from Livepeer'}
-          </button>
-        </div>
-        
-        {loadingVideos ? (
-          <p style={{ opacity: 0.7 }}>Loading videos...</p>
-        ) : myVideos.length === 0 ? (
-          <p style={{ opacity: 0.7 }}>No videos yet. Upload your first video above!</p>
-        ) : (
-          <CreatorVideoGrid videos={myVideos} onDelete={handleDeleteVideo} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CreatorVideoGrid({ videos, onDelete }) {
-  const [hoveredVideo, setHoveredVideo] = useState(null);
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-      {videos.map(video => (
-        <div 
-          key={video.id} 
-          style={{ border: '1px solid #333', borderRadius: 10, overflow: 'hidden', background: '#0a0a0a' }}
-          onMouseEnter={() => setHoveredVideo(video.id)}
-          onMouseLeave={() => setHoveredVideo(null)}
-        >
-          <div style={{ aspectRatio: '16/9', background: '#1a1a1a', position: 'relative' }}>
-            {video.playbackId ? (
-              <>
-                {/* Static iframe thumbnail - always visible, no autoplay */}
-                {hoveredVideo !== video.id && (
-                  <iframe
-                    src={`https://lvpr.tv?v=${video.playbackId}`}
-                    style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
-                    allow="picture-in-picture"
-                  />
-                )}
-                
-                {/* Playing iframe - only on hover */}
-                {hoveredVideo === video.id && (
-                  <iframe
-                    src={`https://lvpr.tv?v=${video.playbackId}&autoplay=true&muted=true`}
-                    style={{ width: '100%', height: '100%', border: 'none' }}
-                    allow="autoplay; encrypted-media; picture-in-picture"
-                    allowFullScreen
-                  />
-                )}
-              </>
-            ) : (
-              <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: '#666' }}>
-                <span style={{ fontSize: 12, opacity: 0.5 }}>Processing...</span>
-              </div>
-            )}
-          </div>
-          <div style={{ padding: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 15, marginBottom: 4 }}>{video.title}</h3>
-            <p style={{ fontSize: 13, opacity: 0.6, margin: 0, marginBottom: 8 }}>
-              {video.visibility} • {video.views || 0} views
-            </p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {video.playbackId && (
-                <a 
-                  href={`/watch/uploads/${video.playbackId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ fontSize: 13, color: '#db2777', textDecoration: 'none' }}
-                >
-                  Watch →
-                </a>
-              )}
-              <button
-                onClick={() => onDelete(video.id)}
-                style={{ 
-                  fontSize: 13, 
-                  color: '#ef4444', 
-                  background: 'none', 
-                  border: 'none', 
-                  cursor: 'pointer',
-                  padding: 0
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-300 mb-1">Name</label>
+              <input
+                className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm"
+                value={profile.name}
+                onChange={(e) => {
+                  setProfile((p) => ({ ...p, name: e.target.value }));
+                  setSaved(false);
                 }}
+                placeholder="Display name"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-300 mb-1">Handle</label>
+              <input
+                className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm"
+                value={profile.handle}
+                onChange={(e) => {
+                  setProfile((p) => ({ ...p, handle: e.target.value }));
+                  setSaved(false);
+                }}
+                placeholder="lipz"
+              />
+              <p className="mt-1 text-[11px] text-gray-500">
+                Lowercase letters/numbers/underscore only. Public URL: <span className="text-gray-300">/c/{slugHandle(profile.handle) || "handle"}</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="block text-xs text-gray-300 mb-1">Bio</label>
+            <textarea
+              className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm min-h-[110px]"
+              value={profile.bio}
+              onChange={(e) => {
+                setProfile((p) => ({ ...p, bio: e.target.value }));
+                setSaved(false);
+              }}
+              placeholder="Tell people who you are…"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+            <div>
+              <label className="block text-xs text-gray-300 mb-1">Website</label>
+              <input
+                className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm"
+                value={profile.website}
+                onChange={(e) => {
+                  setProfile((p) => ({ ...p, website: e.target.value }));
+                  setSaved(false);
+                }}
+                placeholder="https://…"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-300 mb-1">Twitter</label>
+              <input
+                className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm"
+                value={profile.twitter}
+                onChange={(e) => {
+                  setProfile((p) => ({ ...p, twitter: e.target.value }));
+                  setSaved(false);
+                }}
+                placeholder="@…"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-300 mb-1">Instagram</label>
+              <input
+                className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm"
+                value={profile.instagram}
+                onChange={(e) => {
+                  setProfile((p) => ({ ...p, instagram: e.target.value }));
+                  setSaved(false);
+                }}
+                placeholder="@…"
+              />
+            </div>
+          </div>
+
+          <div className="mt-5 flex items-center gap-3">
+            <input
+              id="isPublic"
+              type="checkbox"
+              className="h-4 w-4 accent-pink-500"
+              checked={!profile.isPublic}
+              onChange={(e) => {
+                setProfile((p) => ({ ...p, isPublic: !e.target.checked }));
+                setSaved(false);
+              }}
+            />
+            <label htmlFor="isPublic" className="text-sm text-gray-200">
+              Hide my profile from public directory
+            </label>
+          </div>
+
+          <div className="mt-6 sticky bottom-6">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className={`w-full px-6 py-4 rounded-lg font-bold text-lg transition-all shadow-lg ${
+                saved ? "bg-green-600 hover:bg-green-700" : "bg-pink-600 hover:bg-pink-700"
+              } disabled:opacity-50`}
+            >
+              {saving ? "Saving…" : saved ? "✓ Saved!" : "Save Profile"}
+            </button>
+
+            <p className="mt-2 text-xs text-gray-500 text-center">
+              After saving, your public profile is <span className="text-gray-300">/c/{slugHandle(profile.handle) || "handle"}</span>
+            </p>
+          </div>
+
+          <div className="mt-8 border-t border-gray-800 pt-6">
+            <div className="rounded-lg border border-gray-800 bg-black/30 p-4">
+              <div className="font-semibold">Next step</div>
+              <p className="text-sm text-gray-300 mt-1">
+                Profile looking sharp. Now head to Studio and start uploading content.
+              </p>
+              <button
+                onClick={() => router.push("/studio")}
+                className="mt-3 rounded-md bg-gray-800 px-4 py-2 text-sm font-semibold hover:bg-gray-700"
               >
-                Delete
+                Open Studio →
               </button>
             </div>
-            <p style={{ fontSize: 11, opacity: 0.4, margin: '8px 0 0 0' }}>
-              Created: {new Date(video.createdAt).toLocaleDateString()}
-            </p>
           </div>
-        </div>
-      ))}
-    </div>
+        </section>
+      </div>
+    </main>
   );
 }

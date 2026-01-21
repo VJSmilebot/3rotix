@@ -1,33 +1,16 @@
-import { createClient } from '@supabase/supabase-js';
 import { prisma } from '../../../../lib/prisma';
+import { withAuth } from '../../../../lib/auth-middleware';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-  if (authError || !user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
   const { bundleId } = req.query;
+  const userId = req.user.id;
 
-  if (!bundleId) {
-    return res.status(400).json({ error: 'Bundle ID required' });
+  if (!bundleId || typeof bundleId !== 'string') {
+    return res.status(400).json({ ok: false, error: 'Bundle ID required' });
   }
 
   try {
@@ -37,93 +20,96 @@ export default async function handler(req, res) {
     });
 
     if (!bundle) {
-      return res.status(404).json({ error: 'Bundle not found' });
+      return res.status(404).json({ ok: false, error: 'Bundle not found' });
     }
 
     if (!bundle.isActive) {
-      return res.status(400).json({ error: 'Bundle is not available' });
+      return res.status(400).json({ ok: false, error: 'Bundle is not available' });
     }
 
-    // Can't buy your own bundle
-    if (bundle.creatorId === user.id) {
-      return res.status(400).json({ error: "You can't purchase your own bundle" });
+    if (bundle.creatorId === userId) {
+      return res.status(400).json({ ok: false, error: "You can't purchase your own bundle" });
     }
 
-    // Check if already purchased
+    // Already purchased?
     const existingPurchase = await prisma.bundlePurchase.findUnique({
       where: {
-        bundleId_userId: {
-          bundleId,
-          userId: user.id,
-        },
+        bundleId_userId: { bundleId, userId },
       },
     });
 
     if (existingPurchase) {
-      return res.status(400).json({ error: 'You already own this bundle' });
+      return res.status(400).json({ ok: false, error: 'You already own this bundle' });
     }
 
-    // Get user's wallet
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId: user.id },
-    });
-
-    if (!wallet || wallet.lipzBalance < bundle.price) {
-      return res.status(400).json({ 
-        error: 'Insufficient Lipz balance',
-        required: bundle.price,
-        current: wallet?.lipzBalance || 0,
+    // Ensure buyer wallet exists
+    let wallet = await prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: { userId, lipzBalance: 0, earningsCents: 0, currency: 'USD' },
       });
     }
 
-    // Calculate platform fee (10%)
-    const platformFeeCents = Math.floor((bundle.price * 0.10) * 100); // Convert Lipz to cents, then take 10%
-    const creatorNetCents = Math.floor(bundle.price * 0.90 * 100); // 90% to creator
+    const lipzAmount = Number(bundle.price);
+    if (!Number.isInteger(lipzAmount) || lipzAmount <= 0) {
+      return res.status(400).json({ ok: false, error: 'Invalid bundle price' });
+    }
 
-    // Execute purchase in transaction
-    const [purchase, updatedBuyerWallet, updatedCreatorWallet, transaction] = await prisma.$transaction([
-      // Create purchase record
-      prisma.bundlePurchase.create({
+    // Platform fee percent (fallback 10)
+    const settings = await prisma.platformSettings.findUnique({
+      where: { id: 'default' },
+      select: { globalplatformcutpercent: true },
+    });
+
+    const feePercent = Number(settings?.globalplatformcutpercent ?? 10);
+
+    // ✅ 1 Lipz = 1 cent → cents math uses Lipz directly
+    const platformFeeCents = Math.floor((lipzAmount * feePercent) / 100);
+    const creatorNetCents = lipzAmount - platformFeeCents;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Create purchase record FIRST (unique constraint will protect duplicates)
+      const purchase = await tx.bundlePurchase.create({
         data: {
           bundleId,
-          userId: user.id,
-          lipzPaid: bundle.price,
+          userId,
+          lipzPaid: lipzAmount,
         },
-      }),
-      
-      // Deduct Lipz from buyer
-      prisma.wallet.update({
-        where: { userId: user.id },
-        data: {
-          lipzBalance: {
-            decrement: bundle.price,
-          },
-        },
-      }),
-      
-      // Add earnings to creator's wallet
-      prisma.wallet.upsert({
+      });
+
+      // Race-safe debit
+      const dec = await tx.wallet.updateMany({
+        where: { userId, lipzBalance: { gte: lipzAmount } },
+        data: { lipzBalance: { decrement: lipzAmount } },
+      });
+
+      if (dec.count !== 1) {
+        // If debit fails, throw to rollback purchase record
+        throw new Error('INSUFFICIENT_LIPZ');
+      }
+
+      // Credit creator earnings
+      await tx.wallet.upsert({
         where: { userId: bundle.creatorId },
         create: {
           userId: bundle.creatorId,
           lipzBalance: 0,
           earningsCents: creatorNetCents,
+          currency: 'USD',
         },
         update: {
-          earningsCents: {
-            increment: creatorNetCents,
-          },
+          earningsCents: { increment: creatorNetCents },
         },
-      }),
-      
-      // Log transaction
-      prisma.transaction.create({
+      });
+
+      // Ledger transaction
+      await tx.transaction.create({
         data: {
-          userId: user.id,
+          userId,
           creatorId: bundle.creatorId,
           type: 'BUNDLE_PURCHASE',
-          lipzAmount: bundle.price,
-          amountCents: bundle.price * 100, // Convert to cents
+          lipzAmount: lipzAmount,
+          amountCents: lipzAmount, // ✅ 1 Lipz = 1 cent
           platformFeeCents,
           creatorNetCents,
           metadata: {
@@ -131,20 +117,34 @@ export default async function handler(req, res) {
             bundleTitle: bundle.title,
           },
         },
-      }),
-    ]);
+      });
 
-    // TODO: Send notification to creator about purchase
-    // TODO: Award XP for purchase
+      const updatedBuyerWallet = await tx.wallet.findUnique({ where: { userId } });
+
+      return { purchase, updatedBuyerWallet };
+    });
 
     return res.status(200).json({
+      ok: true,
       success: true,
-      purchase,
-      newBalance: updatedBuyerWallet.lipzBalance,
+      purchase: result.purchase,
+      newBalance: result.updatedBuyerWallet?.lipzBalance ?? 0,
       bundle,
     });
   } catch (err) {
+    if (err?.message === 'INSUFFICIENT_LIPZ') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Insufficient Lipz balance',
+      });
+    }
+
+    // Prisma unique constraint on BundlePurchase(bundleId,userId)
+    if (err?.code === 'P2002') {
+      return res.status(400).json({ ok: false, error: 'You already own this bundle' });
+    }
+
     console.error('Error purchasing bundle:', err);
-    return res.status(500).json({ error: 'Failed to purchase bundle' });
+    return res.status(500).json({ ok: false, error: 'Failed to purchase bundle' });
   }
-}
+});

@@ -1,134 +1,108 @@
 // pages/api/tips/send.js
-import { createClient } from "@supabase/supabase-js";
 import { prisma } from "../../../lib/prisma";
+import { withAuth } from "../../../lib/auth-middleware";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
-  // Get token from Authorization header or cookie (same as your other APIs)
-  const token =
-    req.headers.authorization?.replace("Bearer ", "") ||
-    req.cookies["sb-access-token"];
-
-  if (!token) {
-    return res.status(401).json({ error: "Unauthorized - no token" });
-  }
-
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser(token);
-
-  if (authError || !user) {
-    console.error("Auth error:", authError);
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
+  const userId = req.user.id;
   const { creatorId, amount, message } = req.body || {};
 
-  if (!creatorId || !amount || isNaN(amount) || amount <= 0) {
-    return res.status(400).json({ error: "Invalid tip payload" });
+  const lipzAmount = Number(amount);
+
+  if (!creatorId || !Number.isInteger(lipzAmount) || lipzAmount <= 0) {
+    return res.status(400).json({ ok: false, error: "Invalid tip payload" });
   }
 
-  if (creatorId === user.id) {
-    return res.status(400).json({ error: "You can’t tip yourself" });
+  if (creatorId === userId) {
+    return res.status(400).json({ ok: false, error: "You cannot tip yourself" });
   }
 
   try {
-    // Get sender wallet
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId: user.id },
+    const settings = await prisma.platformSettings.findUnique({
+      where: { id: "default" },
+      select: { globalplatformcutpercent: true },
     });
 
-    if (!wallet || wallet.lipzBalance < amount) {
-      return res.status(400).json({ error: "Not enough Lipz" });
-    }
+    const platformCutPercent = Number(settings?.globalplatformcutpercent ?? 10);
 
-    // Optional: platform settings (fallback 10%)
-    let platformCutPercent = 10;
-    try {
-      const settings = await prisma.platformSettings.findUnique({
-        where: { id: "default" },
+    const platformFeeCents = Math.floor((lipzAmount * platformCutPercent) / 100);
+    const creatorNetCents = lipzAmount - platformFeeCents;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Race-safe debit
+      const dec = await tx.wallet.updateMany({
+        where: { userId, lipzBalance: { gte: lipzAmount } },
+        data: { lipzBalance: { decrement: lipzAmount } },
       });
-      if (settings?.globalPlatformCutPercent != null) {
-        platformCutPercent = settings.globalPlatformCutPercent;
-      }
-    } catch (e) {
-      console.warn("PlatformSettings lookup failed, using default 10%", e);
-    }
 
-    const creatorLipz = Math.floor(amount * (1 - platformCutPercent / 100));
-    const platformLipz = amount - creatorLipz;
+      if (dec.count !== 1) throw new Error("INSUFFICIENT_LIPZ");
 
-    // Run all updates in a transaction
-    const [updatedSenderWallet, createdTip, createdTx] =
-      await prisma.$transaction([
-        // 1) deduct Lipz from sender
-        prisma.wallet.update({
-          where: { userId: user.id },
-          data: {
-            lipzBalance: {
-              decrement: amount,
-            },
-          },
-        }),
-
-        // 2) create Tip row
-        prisma.tip.create({
-          data: {
-            fromUserId: user.id,
-            toUserId: creatorId,
-            lipzAmount: amount,
-            message: message || null,
-          },
-        }),
-
-        // 3) create Transaction row
-        prisma.transaction.create({
-          data: {
-            userId: user.id,
-            creatorId: creatorId,
-            type: "TIP",
-            lipzAmount: amount,
-            amountCents: 0,
-            platformFeeCents: platformLipz,
-            creatorNetCents: creatorLipz,
-          },
-        }),
-      ]);
-
-    // 4) add creator earnings separately (upsert wallet if missing)
-    await prisma.wallet.upsert({
-      where: { userId: creatorId },
-      update: {
-        earningsCents: {
-          // temp: 1 Lipz = 1 cent; we can change this later using settings
-          increment: creatorLipz,
+      const createdTip = await tx.tip.create({
+        data: {
+          fromUserId: userId,
+          toUserId: creatorId,
+          lipzAmount: lipzAmount,
+          message: message ? String(message).slice(0, 500) : null,
         },
-      },
-      create: {
-        userId: creatorId,
-        lipzBalance: 0,
-        earningsCents: creatorLipz,
-        currency: "USD",
-      },
+      });
+
+      await tx.wallet.upsert({
+        where: { userId: creatorId },
+        update: {
+          earningsCents: { increment: creatorNetCents },
+        },
+        create: {
+          userId: creatorId,
+          lipzBalance: 0,
+          earningsCents: creatorNetCents,
+          currency: "USD",
+        },
+      });
+
+      const createdTx = await tx.transaction.create({
+        data: {
+          userId,
+          creatorId,
+          type: "TIP",
+          lipzAmount: lipzAmount,
+          amountCents: lipzAmount, // 1 Lipz = 1 cent
+          platformFeeCents,
+          creatorNetCents,
+          metadata: {
+            tipId: createdTip.id,
+          },
+        },
+      });
+
+      const updatedSenderWallet = await tx.wallet.findUnique({
+        where: { userId },
+      });
+
+      return { updatedSenderWallet, createdTip, createdTx };
     });
 
     return res.status(200).json({
-      success: true,
-      lipzBalance: updatedSenderWallet.lipzBalance,
-      tip: createdTip,
-      transaction: createdTx,
+      ok: true,
+      data: {
+        lipzBalance: result.updatedSenderWallet?.lipzBalance ?? 0,
+        tip: result.createdTip,
+        transaction: result.createdTx,
+      },
     });
   } catch (err) {
+    if (err?.message === "INSUFFICIENT_LIPZ") {
+      const wallet = await prisma.wallet.findUnique({ where: { userId } });
+      return res.status(400).json({
+        ok: false,
+        error: "Not enough Lipz",
+        current: wallet?.lipzBalance ?? 0,
+      });
+    }
+
     console.error("Tip error:", err);
-    return res.status(500).json({ error: "Failed to send tip" });
+    return res.status(500).json({ ok: false, error: "Failed to send tip" });
   }
-}
+});

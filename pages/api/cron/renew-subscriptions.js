@@ -1,15 +1,19 @@
-import { prisma } from '../../../lib/prisma';
+import { prisma } from "../../../lib/prisma";
+import crypto from "crypto";
 
 async function attemptAutoTopUp(userId, requiredLipz) {
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/wallet/auto-topup/process`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.INTERNAL_API_KEY,
-      },
-      body: JSON.stringify({ userId, requiredLipz }),
-    });
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_BASE_URL}/api/wallet/auto-topup/process`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.INTERNAL_API_KEY,
+        },
+        body: JSON.stringify({ userId, requiredLipz }),
+      }
+    );
 
     if (response.ok) {
       const data = await response.json();
@@ -17,28 +21,35 @@ async function attemptAutoTopUp(userId, requiredLipz) {
     }
     return { success: false };
   } catch (err) {
-    console.error('Auto-top-up attempt failed:', err);
+    console.error("Auto-top-up attempt failed:", err);
     return { success: false };
   }
 }
 
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
 export default async function handler(req, res) {
-  // Security: Only allow cron job or internal API key
-  const cronSecret = req.headers['x-cron-secret'];
+  const cronSecret = req.headers["x-cron-secret"];
   if (cronSecret !== process.env.CRON_SECRET) {
-    return res.status(403).json({ error: 'Forbidden' });
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   try {
     const now = new Date();
-    
-    // Find all subscriptions that need renewal
+
+    // platform fee % (fallback 10)
+    const settings = await prisma.platformSettings.findUnique({
+      where: { id: "default" },
+      select: { globalplatformcutpercent: true },
+    });
+    const feePercent = Number(settings?.globalplatformcutpercent ?? 10);
+
     const subscriptionsDue = await prisma.userSubscription.findMany({
       where: {
-        status: 'ACTIVE',
-        currentPeriodEnd: {
-          lte: now,
-        },
+        status: "ACTIVE",
+        currentPeriodEnd: { lte: now },
         cancelAtPeriodEnd: false,
       },
       include: {
@@ -51,22 +62,27 @@ export default async function handler(req, res) {
       successful: 0,
       failed: 0,
       autoTopUps: 0,
+      cancelledForInsufficientFunds: 0,
     };
 
     for (const subscription of subscriptionsDue) {
       try {
+        const lipzAmount = Number(subscription.tier.pricePerMonth);
+
+        if (!Number.isInteger(lipzAmount) || lipzAmount <= 0) {
+          throw new Error("Invalid tier pricePerMonth");
+        }
+
+        // Try auto-top-up if low
         let wallet = await prisma.wallet.findUnique({
           where: { userId: subscription.userId },
         });
 
-        // Try auto-top-up if insufficient balance
-        if (!wallet || wallet.lipzBalance < subscription.tier.pricePerMonth) {
+        if (!wallet || wallet.lipzBalance < lipzAmount) {
           if (wallet?.autoTopUpEnabled) {
-            const topUpResult = await attemptAutoTopUp(subscription.userId, subscription.tier.pricePerMonth);
-            
+            const topUpResult = await attemptAutoTopUp(subscription.userId, lipzAmount);
             if (topUpResult.success) {
               results.autoTopUps++;
-              // Reload wallet
               wallet = await prisma.wallet.findUnique({
                 where: { userId: subscription.userId },
               });
@@ -74,80 +90,122 @@ export default async function handler(req, res) {
           }
         }
 
-        // Check if we have enough after potential auto-top-up
-        if (!wallet || wallet.lipzBalance < subscription.tier.pricePerMonth) {
-          // Insufficient funds - cancel subscription
+        if (!wallet || wallet.lipzBalance < lipzAmount) {
           await prisma.userSubscription.update({
             where: { id: subscription.id },
             data: {
-              status: 'CANCELLED',
+              status: "CANCELLED",
               cancelledAt: now,
+              updatedAt: now,
             },
           });
-          
           results.failed++;
+          results.cancelledForInsufficientFunds++;
           continue;
         }
 
-        // Process renewal payment
-        const platformFeeCents = Math.floor((subscription.tier.pricePerMonth * 0.10) * 100);
-        const creatorNetCents = Math.floor(subscription.tier.pricePerMonth * 0.90 * 100);
-        
-        const newPeriodEnd = new Date(subscription.currentPeriodEnd.getTime() + 30 * 24 * 60 * 60 * 1000);
+        // ✅ 1 Lipz = 1 cent
+        const platformFeeCents = Math.floor((lipzAmount * feePercent) / 100);
+        const creatorNetCents = lipzAmount - platformFeeCents;
 
-        await prisma.$transaction([
-          // Update subscription
-          prisma.userSubscription.update({
+        const periodStart = subscription.currentPeriodEnd;
+        const periodEnd = addDays(subscription.currentPeriodEnd, 30);
+
+        const subscriptionPaymentId = crypto.randomUUID();
+
+        await prisma.$transaction(async (tx) => {
+          // Race-safe debit
+          const dec = await tx.wallet.updateMany({
+            where: { userId: subscription.userId, lipzBalance: { gte: lipzAmount } },
+            data: { lipzBalance: { decrement: lipzAmount } },
+          });
+
+          if (dec.count !== 1) {
+            // If debit fails in-transaction, cancel subscription to avoid infinite retries
+            await tx.userSubscription.update({
+              where: { id: subscription.id },
+              data: {
+                status: "CANCELLED",
+                cancelledAt: now,
+                updatedAt: now,
+              },
+            });
+            throw new Error("INSUFFICIENT_LIPZ");
+          }
+
+          // Update subscription period + totalPaid
+          await tx.userSubscription.update({
             where: { id: subscription.id },
             data: {
-              currentPeriodStart: subscription.currentPeriodEnd,
-              currentPeriodEnd: newPeriodEnd,
-              totalPaid: {
-                increment: subscription.tier.pricePerMonth,
-              },
+              currentPeriodStart: periodStart,
+              currentPeriodEnd: periodEnd,
+              totalPaid: { increment: lipzAmount },
+              updatedAt: now,
             },
-          }),
-          
-          // Record payment
-          prisma.subscriptionPayment.create({
+          });
+
+          // Record payment (domain)
+          await tx.subscriptionPayment.create({
             data: {
+              id: subscriptionPaymentId,
               subscriptionId: subscription.id,
               userId: subscription.userId,
               creatorId: subscription.creatorId,
               tierId: subscription.tierId,
-              lipzAmount: subscription.tier.pricePerMonth,
-              amountCents: subscription.tier.pricePerMonth * 100,
+              lipzAmount,
+              amountCents: lipzAmount,
               platformFeeCents,
               creatorNetCents,
-              periodStart: subscription.currentPeriodEnd,
-              periodEnd: newPeriodEnd,
-              status: 'SUCCESS',
+              periodStart,
+              periodEnd,
+              status: "SUCCESS",
+              // paidAt/createdAt default in DB
             },
-          }),
-          
-          // Deduct from subscriber
-          prisma.wallet.update({
-            where: { userId: subscription.userId },
-            data: {
-              lipzBalance: {
-                decrement: subscription.tier.pricePerMonth,
-              },
-            },
-          }),
-          
-          // Add to creator earnings
-          prisma.wallet.update({
+          });
+
+          // Credit creator earnings (upsert in case wallet doesn't exist)
+          await tx.wallet.upsert({
             where: { userId: subscription.creatorId },
+            create: {
+              userId: subscription.creatorId,
+              lipzBalance: 0,
+              earningsCents: creatorNetCents,
+              currency: "USD",
+            },
+            update: { earningsCents: { increment: creatorNetCents } },
+          });
+
+          // Ledger transaction
+          await tx.transaction.create({
             data: {
-              earningsCents: {
-                increment: creatorNetCents,
+              userId: subscription.userId,
+              creatorId: subscription.creatorId,
+              type: "SUBSCRIPTION_PAYMENT",
+              lipzAmount,
+              amountCents: lipzAmount,
+              platformFeeCents,
+              creatorNetCents,
+              metadata: {
+                renewal: true,
+                subscriptionId: subscription.id,
+                subscriptionPaymentId,
+                tierId: subscription.tierId,
+                periodStart,
+                periodEnd,
               },
             },
-          }),
-        ]);
+          });
+        });
 
         results.successful++;
       } catch (err) {
+        // If we threw INSUFFICIENT_LIPZ inside tx, it already cancelled.
+        if (err?.message === "INSUFFICIENT_LIPZ") {
+          results.failed++;
+          results.cancelledForInsufficientFunds++;
+          continue;
+        }
+
         console.error(`Failed to renew subscription ${subscription.id}:`, err);
         results.failed++;
       }
@@ -155,11 +213,11 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       success: true,
-      message: 'Subscription renewals processed',
+      message: "Subscription renewals processed",
       results,
     });
   } catch (err) {
-    console.error('Cron job error:', err);
-    return res.status(500).json({ error: 'Cron job failed' });
+    console.error("Cron job error:", err);
+    return res.status(500).json({ error: "Cron job failed" });
   }
 }

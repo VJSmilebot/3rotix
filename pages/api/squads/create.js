@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { prisma } from "../../../lib/prisma.js";
 import { withAuth } from "../../../lib/auth-middleware.js";
+import { awardXP } from "../../../lib/xp.js";
 
 function slugify(str) {
   return String(str || "")
@@ -12,19 +13,17 @@ function slugify(str) {
 
 export default withAuth(async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
-
-  const XP_ENABLED = process.env.XP_ENABLED === "true";
 
   try {
     const ownerId = req.user.id; // ✅ never trust client ownerId
 
     const { name, slug, description, maxMembers, isPrivate } = req.body || {};
-    if (!name) return res.status(400).json({ error: "Missing required field: name" });
+    if (!name) return res.status(400).json({ ok: false, error: "Missing required field: name" });
 
     const baseSlug = slugify(slug || name);
-    if (!baseSlug) return res.status(400).json({ error: "Invalid name/slug" });
+    if (!baseSlug) return res.status(400).json({ ok: false, error: "Invalid name/slug" });
 
     const squadId = randomUUID();
     const finalSlug = `${baseSlug}-${squadId.slice(0, 6)}`;
@@ -64,38 +63,23 @@ export default withAuth(async function handler(req, res) {
         },
       });
 
-      // ✅ XP toggle + idempotency using XPLog unique(userId, idempotencyKey)
-      if (XP_ENABLED) {
-        const idempotencyKey = `squad-create-${ownerId}-${squad.id}`;
-
-        try {
-          await tx.xPLog.create({
-            data: {
-              userId: ownerId,
-              actionType: "SQUAD_CREATE",
-              xpValue: 50,
-              refId: squad.id,
-              idempotencyKey,
-            },
-          });
-
-          await tx.user.update({
-            where: { id: ownerId },
-            data: { totalXp: { increment: 50 } },
-          });
-        } catch (e) {
-          // Prisma unique constraint violation => already awarded, do nothing
-          if (e?.code !== "P2002") throw e;
-        }
-      }
-
       return squad;
     });
 
-    return res.status(201).json({ squad: createdSquad });
+    // Award XP through centralized function (handles XP_ENABLED flag internally)
+    await awardXP({
+      userId: ownerId,
+      actionType: "SQUAD_CREATE",
+      xpValue: 50,
+      refId: createdSquad.id,
+      idempotencyKey: `squad-create-${ownerId}-${createdSquad.id}`
+    });
+
+    return res.status(201).json({ ok: true, data: { squad: createdSquad } });
   } catch (error) {
     console.error("Create squad error:", error);
     return res.status(500).json({
+      ok: false,
       error: error?.message || "Failed to create squad",
     });
   }

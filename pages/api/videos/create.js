@@ -1,57 +1,40 @@
 // pages/api/videos/create.js
-import { createClient } from '@supabase/supabase-js';
+import { prisma } from '../../../lib/prisma';
+import { withAuth } from '../../../lib/auth-middleware';
 import { randomUUID } from 'crypto';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'method-not-allowed' });
+    return res.status(405).json({ ok: false, error: 'method-not-allowed' });
+  }
+
+  const userId = req.user.id;
+  const { assetId, title, visibility, fingerprintSha256 } = req.body || {};
+
+  if (!assetId) {
+    return res.status(400).json({ ok: false, error: 'missing-assetId' });
+  }
+  if (!title) {
+    return res.status(400).json({ ok: false, error: 'missing-title' });
   }
 
   try {
-    const { userId, assetId, title, visibility, fingerprintSha256 } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({ error: 'missing-userId' });
-    }
-    if (!assetId) {
-      return res.status(400).json({ error: 'missing-assetId' });
-    }
-    if (!title) {
-      return res.status(400).json({ error: 'missing-title' });
-    }
-
     const id = randomUUID();
-    const now = new Date().toISOString();
 
-    const { data, error } = await supabaseAdmin
-      .from('Video')
-      .insert({
+    const video = await prisma.video.create({
+      data: {
         id,
         userId,
         title,
-        // playbackId starts null – we set it later in update-playback
         assetId,
         visibility: visibility || 'public',
-        createdAt: now,
-        updatedAt: now,
         fingerprintSha256,
-      })
-      .select()
-      .single();
+      },
+    });
 
-    if (error) {
-      console.error('[api/videos/create] insert error', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    return res.status(200).json({ success: true, video: data });
+    return res.status(200).json({ ok: true, data: { success: true, video } });
   } catch (e) {
-    console.error('[api/videos/create] unexpected error', e);
-    return res.status(500).json({ error: String(e) });
+    console.error('[api/videos/create] error:', e);
+    return res.status(500).json({ ok: false, error: String(e) });
   }
-}
+});

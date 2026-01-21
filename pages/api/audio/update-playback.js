@@ -1,21 +1,17 @@
 // pages/api/audio/update-playback.js
-import { createClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '../../../lib/supabaseAdmin.js';
+import { withAuth } from '../../../lib/auth-middleware.js';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'method-not-allowed' });
+    return res.status(405).json({ ok: false, error: 'method-not-allowed' });
   }
 
   try {
     const { assetId, playbackId } = req.body || {};
 
     if (!assetId) {
-      return res.status(400).json({ error: 'missing-assetId' });
+      return res.status(400).json({ ok: false, error: 'missing-assetId' });
     }
 
     const now = new Date().toISOString();
@@ -32,12 +28,12 @@ export default async function handler(req, res) {
 
     if (error) {
       console.error('[api/audio/update-playback] update error', error);
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ ok: false, error: error.message });
     }
 
-    return res.status(200).json({ success: true, audio: data });
+    return res.status(200).json({ ok: true, data });
   } catch (e) {
     console.error('[api/audio/update-playback] unexpected error', e);
-    return res.status(500).json({ error: String(e) });
+    return res.status(500).json({ ok: false, error: String(e) });
   }
-}
+});

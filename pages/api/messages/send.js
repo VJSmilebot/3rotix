@@ -1,42 +1,26 @@
 // pages/api/messages/send.js
-import { createClient } from "@supabase/supabase-js";
 import { prisma } from "../../../lib/prisma";
+import { withAuth } from "../../../lib/auth-middleware";
+import { createSupabaseServerClient } from "../../../utils/supabase/server";
 import { trackDMActivity } from "../../../utils/chat-tracker";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
-  const token =
-    req.headers.authorization?.replace("Bearer ", "") ||
-    req.cookies["sb-access-token"];
-
-  if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser(token);
-
-  if (authError || !user) return res.status(401).json({ error: "Unauthorized" });
-
+  const userId = req.user.id;
   const { conversationId, content, mediaUrls, mediaType } = req.body || {};
 
   if (!conversationId) {
-    return res.status(400).json({ error: "Missing conversationId" });
+    return res.status(400).json({ ok: false, error: "Missing conversationId" });
   }
 
   const hasText = typeof content === "string" && content.trim().length > 0;
   const hasMedia = Array.isArray(mediaUrls) && mediaUrls.length > 0;
 
   if (!hasText && !hasMedia) {
-    return res.status(400).json({ error: "Message content or media is required" });
+    return res.status(400).json({ ok: false, error: "Message content or media is required" });
   }
 
   try {
@@ -51,40 +35,45 @@ export default async function handler(req, res) {
       },
     });
 
-    if (!conversation) return res.status(404).json({ error: "Conversation not found" });
+    if (!conversation) {
+      return res.status(404).json({ ok: false, error: "Conversation not found" });
+    }
 
     const isParticipant =
-      conversation.participant1Id === user.id || conversation.participant2Id === user.id;
+      conversation.participant1Id === userId || conversation.participant2Id === userId;
 
-    if (!isParticipant) return res.status(403).json({ error: "Not allowed" });
+    if (!isParticipant) {
+      return res.status(403).json({ ok: false, error: "Not allowed" });
+    }
 
-    // Lock handling (keeps your UI flow intact)
+    // Lock handling
     if (!conversation.isUnlocked && (conversation.unlockPrice || 0) > 0) {
       return res.status(402).json({
+        ok: false,
         error: "Conversation locked",
         requiresUnlock: true,
         unlockPrice: conversation.unlockPrice,
       });
     }
 
-    // ✅ REQUIRED by your schema: receiverId
+    // REQUIRED by schema: receiverId
     const receiverId =
-      conversation.participant1Id === user.id
+      conversation.participant1Id === userId
         ? conversation.participant2Id
         : conversation.participant1Id;
 
     if (!receiverId) {
-      return res.status(500).json({ error: "Unable to determine receiverId" });
+      return res.status(500).json({ ok: false, error: "Unable to determine receiverId" });
     }
 
-    // If your DB column is jsonb, prefer null over [] when empty
+    // If DB column is jsonb, prefer null over [] when empty
     const safeMediaUrls = hasMedia ? mediaUrls : null;
 
     const message = await prisma.message.create({
       data: {
         conversationId,
-        senderId: user.id,
-        receiverId, // ✅ add this
+        senderId: userId,
+        receiverId,
         content: hasText ? content.trim() : null,
         mediaUrls: safeMediaUrls,
         mediaType: mediaType || null,
@@ -95,7 +84,7 @@ export default async function handler(req, res) {
     let rewardsDelta = null;
     try {
       rewardsDelta = await trackDMActivity({
-        userId: user.id,
+        userId,
         messageCount: 1,
         messageText: hasText ? content.trim() : null,
         messageId: message.id,
@@ -107,7 +96,7 @@ export default async function handler(req, res) {
 
     // Sender profile for client UI
     const sender = await prisma.user.findUnique({
-      where: { id: user.id },
+      where: { id: userId },
       select: { id: true, name: true, handle: true, image: true },
     });
 
@@ -119,16 +108,17 @@ export default async function handler(req, res) {
       rewardsDelta,
     };
 
-    // Realtime broadcast
+    // Realtime broadcast using server client
+    const supabase = createSupabaseServerClient(req, res);
     await supabase.channel(`dm-${conversationId}`).send({
       type: "broadcast",
       event: "new-message",
       payload,
     });
 
-    return res.status(200).json({ success: true, message: payload });
+    return res.status(200).json({ ok: true, data: { success: true, message: payload } });
   } catch (err) {
     console.error("Error sending message:", err);
-    return res.status(500).json({ error: "Failed to send message" });
+    return res.status(500).json({ ok: false, error: "Failed to send message" });
   }
-}
+});

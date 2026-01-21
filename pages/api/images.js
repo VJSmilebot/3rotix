@@ -1,43 +1,34 @@
-import { createClient } from '@supabase/supabase-js';
+import { withAuth } from "../../lib/auth-middleware.js";
+import { prisma } from "../../lib/prisma.js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
   const { userId, visibility } = req.query;
 
   if (!userId) {
-    return res.status(400).json({ error: 'Missing userId' });
+    return res.status(400).json({ ok: false, error: 'Missing userId' });
   }
 
   try {
-    let query = supabase
-      .from('Image')
-      .select('*')
-      .eq('userId', userId)
-      .order('createdAt', { ascending: false });
+    const where = {
+      userId,
+    };
 
-    // If visibility is specified, filter by it
     if (visibility) {
-      query = query.eq('visibility', visibility);
+      where.visibility = visibility;
     }
 
-    const { data, error } = await query;
+    const images = await prisma.image.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
 
-    if (error) {
-      console.error('[api/images] fetch error:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    return res.status(200).json(data || []);
+    return res.status(200).json({ ok: true, data: images || [] });
   } catch (err) {
-    console.error('[api/images] unexpected error:', err);
-    return res.status(500).json({ error: String(err) });
+    console.error('[api/images] error:', err);
+    return res.status(500).json({ ok: false, error: String(err) });
   }
-}
+});

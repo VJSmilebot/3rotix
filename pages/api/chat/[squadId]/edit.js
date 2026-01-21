@@ -1,28 +1,18 @@
 import { prisma } from '../../../../lib/prisma';
-import { createSupabaseServerClient } from '../../../../utils/supabase/server';
+import { withAuth } from '../../../../lib/auth-middleware';
 
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'PUT') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
   try {
     const { squadId } = req.query;
     const { messageId, content } = req.body;
+    const userId = req.user.id;
 
-    const supabase = createSupabaseServerClient(req, res);
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-
-    if (!authUser) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: authUser.email },
-    });
-
-    if (!user) {
-      return res.status(401).json({ error: 'User not found' });
+    if (!messageId || !content) {
+      return res.status(400).json({ ok: false, error: 'Missing messageId or content' });
     }
 
     const message = await prisma.chatMessage.findUnique({
@@ -30,11 +20,11 @@ export default async function handler(req, res) {
     });
 
     if (!message) {
-      return res.status(404).json({ error: 'Message not found' });
+      return res.status(404).json({ ok: false, error: 'Message not found' });
     }
 
-    if (message.userId !== user.id) {
-      return res.status(403).json({ error: 'Cannot edit other users messages' });
+    if (message.userId !== userId) {
+      return res.status(403).json({ ok: false, error: 'Cannot edit other users messages' });
     }
 
     const updatedMessage = await prisma.chatMessage.update({
@@ -67,9 +57,9 @@ export default async function handler(req, res) {
       },
     });
 
-    return res.status(200).json(updatedMessage);
+    return res.status(200).json({ ok: true, data: updatedMessage });
   } catch (error) {
     console.error('Edit message error:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ ok: false, error: error.message });
   }
-}
+});

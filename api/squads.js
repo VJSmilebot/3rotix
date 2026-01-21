@@ -1,6 +1,7 @@
 const { calculateSquadLevel, getNextLevelXp } = require('../utils/squad-progression');
 const { prisma } = require('../lib/prisma.js');
 const { getSquadPerks } = require('../utils/squad-perks');
+const { awardXP } = require('../lib/xp.js');
 
 async function createSquad({ name, description, ownerId, type = 'PUBLIC' }) {
   const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
@@ -98,14 +99,13 @@ async function updateSquadXP({ squadId, amount }) {
     });
 
     if (levelUp) {
-      // Create level up notification
-      await tx.xPLog.create({
-        data: {
-          userId: squad.ownerId,
-          actionType: 'SQUAD_LEVEL_UP',
-          xpValue: 500,
-          refId: squadId
-        }
+      // Use awardXP from lib/xp.js with idempotencyKey
+      await awardXP({
+        userId: squad.ownerId,
+        actionType: 'SQUAD_LEVEL_UP',
+        xpValue: 500,
+        refId: squadId,
+        idempotencyKey: `squad_level_up:${squadId}:${newLevel}`
       });
     }
 

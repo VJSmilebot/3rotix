@@ -2,19 +2,17 @@
 // Awards XP for chat messages and returns XP + rank + badge info.
 
 import { prisma } from "../../../lib/prisma";
+import { withAuth } from "../../../lib/auth-middleware";
 import { trackChatActivity } from "../../../utils/chat-tracker";
 
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
   try {
-    const { userId, message, squadId } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({ error: "Missing userId" });
-    }
+    const { message, squadId } = req.body;
+    const userId = req.user.id;
 
     const messageText =
       typeof message === "string" && message.trim().length > 0
@@ -28,7 +26,7 @@ export default async function handler(req, res) {
     });
 
     if (!beforeUser) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ ok: false, error: "User not found" });
     }
 
     // 1) Core XP + achievements (this uses all your rules/filters)
@@ -88,6 +86,6 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error("Error in /api/chat/track-xp:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ ok: false, error: "Internal server error" });
   }
-}
+});

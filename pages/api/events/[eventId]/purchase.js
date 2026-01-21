@@ -1,5 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
-import { prisma } from '../../../../lib/prisma';
+import { createClient } from "@supabase/supabase-js";
+import { prisma } from "../../../../lib/prisma";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -7,27 +7,31 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const token = req.headers.authorization?.replace('Bearer ', '') || 
-                req.cookies['sb-access-token'];
+  const token =
+    req.headers.authorization?.replace("Bearer ", "") ||
+    req.cookies["sb-access-token"];
 
   if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser(token);
 
   if (authError || !user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
   const { eventId } = req.query;
 
   if (!eventId) {
-    return res.status(400).json({ error: 'Event ID required' });
+    return res.status(400).json({ error: "Event ID required" });
   }
 
   try {
@@ -36,22 +40,25 @@ export default async function handler(req, res) {
     });
 
     if (!event) {
-      return res.status(404).json({ error: 'Event not found' });
+      return res.status(404).json({ error: "Event not found" });
     }
 
     if (!event.isActive) {
-      return res.status(400).json({ error: 'Event is not available' });
+      return res.status(400).json({ error: "Event is not available" });
     }
 
-    if (event.status === 'ENDED' || event.status === 'CANCELLED') {
-      return res.status(400).json({ error: 'Event has ended or been cancelled' });
+    if (event.status === "ENDED" || event.status === "CANCELLED") {
+      return res
+        .status(400)
+        .json({ error: "Event has ended or been cancelled" });
     }
 
     if (event.creatorId === user.id) {
-      return res.status(400).json({ error: "You can't purchase your own event ticket" });
+      return res
+        .status(400)
+        .json({ error: "You can't purchase your own event ticket" });
     }
 
-    // Check if already purchased
     const existingPurchase = await prisma.eventTicketPurchase.findUnique({
       where: {
         eventTicketId_userId: {
@@ -62,85 +69,70 @@ export default async function handler(req, res) {
     });
 
     if (existingPurchase) {
-      return res.status(400).json({ error: 'You already have a ticket for this event' });
+      return res
+        .status(400)
+        .json({ error: "You already have a ticket for this event" });
     }
 
-    // Check if sold out
     if (event.totalTickets && event.soldTickets >= event.totalTickets) {
-      return res.status(400).json({ error: 'Event is sold out' });
+      return res.status(400).json({ error: "Event is sold out" });
     }
 
-    // Get user's wallet
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId: user.id },
+    const settings = await prisma.platformSettings.findUnique({
+      where: { id: "default" },
+      select: { globalplatformcutpercent: true },
     });
 
-    if (!wallet || wallet.lipzBalance < event.price) {
-      return res.status(400).json({ 
-        error: 'Insufficient Lipz balance',
-        required: event.price,
-        current: wallet?.lipzBalance || 0,
-      });
-    }
+    const lipzAmount = Number(event.price);
+    const feePercent = Number(settings?.globalplatformcutpercent ?? 10);
+    const platformFeeCents = Math.floor((lipzAmount * feePercent) / 100);
+    const creatorNetCents = lipzAmount - platformFeeCents;
 
-    // Calculate fees
-    const platformFeeCents = Math.floor((event.price * 0.10) * 100);
-    const creatorNetCents = Math.floor(event.price * 0.90 * 100);
-
-    // Execute purchase in transaction
-    const [purchase, updatedBuyerWallet, updatedCreatorWallet, updatedEvent, transaction] = await prisma.$transaction([
-      // Create purchase record
-      prisma.eventTicketPurchase.create({
+    const result = await prisma.$transaction(async (tx) => {
+      // Create purchase record (unique constraint protects duplicates)
+      const purchase = await tx.eventTicketPurchase.create({
         data: {
           eventTicketId: eventId,
           userId: user.id,
-          lipzPaid: event.price,
+          lipzPaid: lipzAmount,
         },
-      }),
-      
-      // Deduct Lipz from buyer
-      prisma.wallet.update({
-        where: { userId: user.id },
-        data: {
-          lipzBalance: {
-            decrement: event.price,
-          },
-        },
-      }),
-      
-      // Add earnings to creator
-      prisma.wallet.upsert({
+      });
+
+      // Race-safe debit
+      const dec = await tx.wallet.updateMany({
+        where: { userId: user.id, lipzBalance: { gte: lipzAmount } },
+        data: { lipzBalance: { decrement: lipzAmount } },
+      });
+
+      if (dec.count !== 1) throw new Error("INSUFFICIENT_LIPZ");
+
+      const updatedCreatorWallet = await tx.wallet.upsert({
         where: { userId: event.creatorId },
         create: {
           userId: event.creatorId,
           lipzBalance: 0,
           earningsCents: creatorNetCents,
+          currency: "USD",
         },
         update: {
-          earningsCents: {
-            increment: creatorNetCents,
-          },
+          earningsCents: { increment: creatorNetCents },
         },
-      }),
+      });
 
-      // Increment sold tickets
-      prisma.eventTicket.update({
+      const updatedEvent = await tx.eventTicket.update({
         where: { id: eventId },
         data: {
-          soldTickets: {
-            increment: 1,
-          },
+          soldTickets: { increment: 1 },
         },
-      }),
-      
-      // Log transaction
-      prisma.transaction.create({
+      });
+
+      await tx.transaction.create({
         data: {
           userId: user.id,
           creatorId: event.creatorId,
-          type: 'EVENT_TICKET',
-          lipzAmount: event.price,
-          amountCents: event.price * 100,
+          type: "EVENT_TICKET",
+          lipzAmount,
+          amountCents: lipzAmount, // 1 Lipz = 1 cent
           platformFeeCents,
           creatorNetCents,
           metadata: {
@@ -149,17 +141,32 @@ export default async function handler(req, res) {
             eventDate: event.eventDate,
           },
         },
-      }),
-    ]);
+      });
+
+      const updatedBuyerWallet = await tx.wallet.findUnique({
+        where: { userId: user.id },
+      });
+
+      return { purchase, updatedBuyerWallet, updatedCreatorWallet, updatedEvent };
+    });
 
     return res.status(200).json({
       success: true,
-      purchase,
-      newBalance: updatedBuyerWallet.lipzBalance,
-      event: updatedEvent,
+      purchase: result.purchase,
+      newBalance: result.updatedBuyerWallet?.lipzBalance ?? 0,
+      event: result.updatedEvent,
     });
   } catch (err) {
-    console.error('Error purchasing ticket:', err);
-    return res.status(500).json({ error: 'Failed to purchase ticket' });
+    if (err?.message === "INSUFFICIENT_LIPZ") {
+      const wallet = await prisma.wallet.findUnique({ where: { userId: user.id } });
+      return res.status(400).json({
+        error: "Insufficient Lipz balance",
+        required: event?.price,
+        current: wallet?.lipzBalance ?? 0,
+      });
+    }
+
+    console.error("Error purchasing ticket:", err);
+    return res.status(500).json({ error: "Failed to purchase ticket" });
   }
 }

@@ -1,28 +1,22 @@
 // pages/api/audio/create.js
-import { createClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '../../../lib/supabaseAdmin.js';
+import { withAuth } from '../../../lib/auth-middleware.js';
 import { randomUUID } from 'crypto';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-export default async function handler(req, res) {
+export default withAuth(async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'method-not-allowed' });
+    return res.status(405).json({ ok: false, error: 'method-not-allowed' });
   }
 
   try {
-    const { userId, assetId, title, visibility } = req.body || {};
+    const userId = req.user.id; // Derive from session, not body
+    const { assetId, title, visibility } = req.body || {};
 
-    if (!userId) {
-      return res.status(400).json({ error: 'missing-userId' });
-    }
     if (!assetId) {
-      return res.status(400).json({ error: 'missing-assetId' });
+      return res.status(400).json({ ok: false, error: 'missing-assetId' });
     }
     if (!title) {
-      return res.status(400).json({ error: 'missing-title' });
+      return res.status(400).json({ ok: false, error: 'missing-title' });
     }
 
     const id = randomUUID();
@@ -44,12 +38,12 @@ export default async function handler(req, res) {
 
     if (error) {
       console.error('[api/audio/create] insert error', error);
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ ok: false, error: error.message });
     }
 
-    return res.status(200).json({ success: true, audio: data });
+    return res.status(200).json({ ok: true, data });
   } catch (e) {
     console.error('[api/audio/create] unexpected error', e);
-    return res.status(500).json({ error: String(e) });
+    return res.status(500).json({ ok: false, error: String(e) });
   }
-}
+});
